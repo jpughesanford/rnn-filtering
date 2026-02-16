@@ -87,9 +87,17 @@ class TestPredict:
 
 class TestInitializeFromHMM:
 
-    def test_initialize_from_hmm(self, casino):
+    def test_initialize_Astar(self, casino):
         rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=0)
-        rnn.initialize_from_hmm(casino)
+        rnn.initialize_Astar(casino)
+        _, emissions = casino.sample(batch_size=3, time_steps=50)
+        Y, _ = rnn.predict(emissions)
+        assert Y.shape == (3, 50, casino.emission_dim)
+        assert np.allclose(jnp.sum(Y, axis=-1), 1.0, atol=1e-5)
+
+    def test_initialize_exact(self, casino):
+        rnn = ExactRNN(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn.initialize_weights(casino)
         _, emissions = casino.sample(batch_size=3, time_steps=50)
         Y, _ = rnn.predict(emissions)
         assert Y.shape == (3, 50, casino.emission_dim)

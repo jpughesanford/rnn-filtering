@@ -6,7 +6,7 @@ This package provides:
 
 - **`DiscreteHMM`** &mdash; Simulate a discrete HMM, sample hidden/emission trajectories in batch, and compute the exact Bayesian next-token posterior via forward filtering.
 - **`ExactRNN`** &mdash; The exact nonlinear forward-filter recurrence implemented as a JAX-compatible RNN.
-- **`ModelA`** &mdash; A stable linear RNN (`x_t = A x_{t-1} + B[:, y_t]`) with Cayley-parameterised dynamics and column-stochastic readout. Supports `initialize_from_hmm` for Jacobian-linearised initialization.
+- **`ModelA`** &mdash; A stable linear RNN (`x_t = A x_{t-1} + B[:, y_t]`) with Cayley-parameterised dynamics and column-stochastic readout. Supports `initialize_Astar` for Jacobian-linearised initialization.
 - **`ModelB`** &mdash; A stable linear RNN with an affine softmax readout (`p_t = softmax(C x_t + d)`).
 
 ## Installation
@@ -36,9 +36,9 @@ loss = rnn.train_on_posterior(hmm, batch_size=100, time_steps=500, optimization_
 # Predict
 Y, X = rnn.predict(emissions)
 
-# Initialize from HMM (used to create ModelAstar)
+# Initialize an Astar model from HMM
 rnn_lin = ModelA(hmm.latent_dim, hmm.emission_dim)
-rnn_lin.initialize_from_hmm(hmm)
+rnn_lin.initialize_Astar(hmm)
 
 # Use initial condition for exact match (no burn-in needed)
 import numpy as np

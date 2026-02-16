@@ -5,9 +5,11 @@ predicted next-token probability distribution at every time step.
 
 Model hierarchy
 ---------------
-- **ExactRNN** : Implements the exact nonlinear forward-filter recurrence.
-- **ModelA**   : Linear recurrence with Cayley-stable A, stochastic readout.
-- **ModelB**   : Linear recurrence with Cayley-stable A, affine softmax readout.
+- **AbstractRNN** : Implements baseline functionality and abstract methods.
+  - **ExactRNN**  : Implements the exact nonlinear forward-filter recurrence.
+  - **ModelA**    : Linear recurrence with Cayley-stable A, stochastic readout.
+    - **ModelAstar** : Model A with weights defined via a linearization. See ModelA.initialize_Astar.
+  - **ModelB**    : Linear recurrence with Cayley-stable A, affine softmax readout.
 """
 
 from abc import abstractmethod
@@ -470,7 +472,7 @@ class ModelA(AbstractRNN):
         y_t = C @ jax.nn.softmax(x_t)
         return x_t, y_t
 
-    def initialize_from_hmm(self, hmm):
+    def initialize_Astar(self, hmm):
         """Initialize raw weights from an HMM via log-probability linearization.
 
         Computes the Jacobian of the log-transfer map at the stationary
