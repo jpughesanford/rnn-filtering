@@ -5,15 +5,16 @@
 
 import os
 import sys
+
 # Path to your project source code
 sys.path.insert(0, os.path.abspath("../../src"))
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'linear-rnn-filtering'
-copyright = '2026, NeuroStatsLab'
-author = 'NeuroStatsLab'
+project = "linear-rnn-filtering"
+copyright = "2026, NeuroStatsLab"
+author = "NeuroStatsLab"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -25,7 +26,7 @@ extensions = [
     "sphinx.ext.autosummary",
     "myst_parser",
 ]
-templates_path = ['_templates']
+templates_path = ["_templates"]
 exclude_patterns = []
 autosummary_generate = True
 
@@ -33,5 +34,5 @@ autosummary_generate = True
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'alabaster'
-html_static_path = ['_static']
+html_theme = "alabaster"
+html_static_path = ["_static"]
