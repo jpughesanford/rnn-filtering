@@ -4,9 +4,9 @@ This repository provides the base code that was used in [submitted manuscript] t
 investigate the ability of Recurrent Neural Networks (RNNs) with linear latent dynamics to
 perform next token prediction on sequences sampled from Hidden Markov Models (HMMs).
 
-At the moment, this code does not reproduce the analysis done in the manuscript, but that is something we plan 
-to implement and publish soon. At the moment, this repo simply publishes our JAX-based implentations of 
-RNNs and HMMs. These classes were used in the paper to generate data and validate the theory. 
+At the moment, this code does not reproduce the datasets/figures/analysis done in the manuscript, but that is something
+we plan to implement soon. What this version of the repo does is make publish the JAX-based, fully differentiable, HMM
+and RNN classes that we developed for this project. 
 
 ## Installation
 
