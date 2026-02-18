@@ -16,7 +16,6 @@ def casino():
 
 
 class TestConstruction:
-
     def test_exact_type(self):
         rnn = ExactRNN(2, 6)
         assert isinstance(rnn, ExactRNN)
@@ -56,7 +55,6 @@ class TestConstruction:
 
 
 class TestPredict:
-
     def test_predict_shapes(self, casino):
         rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=0)
         _, emissions = casino.sample(batch_size=3, time_steps=20)
@@ -88,7 +86,6 @@ class TestPredict:
 
 
 class TestInitializeFromHMM:
-
     def test_initialize_Astar(self, casino):
         rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=0)
         rnn.initialize_Astar(casino)
@@ -107,7 +104,6 @@ class TestInitializeFromHMM:
 
 
 class TestTraining:
-
     def test_train_on_posterior_with_kl_reduces_loss(self, casino):
         rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=1)
         loss = rnn.train(
@@ -120,7 +116,7 @@ class TestTraining:
             print_every=999,
         )
         assert loss[-1, 0] < loss[0, 0]
-    
+
     def test_train_on_posterior_with_hilbert_reduces_loss(self, casino):
         rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=1)
         loss = rnn.train(
@@ -149,7 +145,6 @@ class TestTraining:
 
 
 class TestFreezeUnfreeze:
-
     def test_freeze_prevents_update(self, casino):
         rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=3)
         rnn.freeze(["B", "C"])

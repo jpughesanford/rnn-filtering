@@ -4,86 +4,69 @@ This repository provides the base code that was used in [submitted manuscript] t
 investigate the ability of Recurrent Neural Networks (RNNs) with linear latent dynamics to
 perform next token prediction on sequences sampled from Hidden Markov Models (HMMs).
 
-This package implements the following classes:
-
-- **`DiscreteHMM`** &mdash; Simulate a discrete HMM, sample hidden/emission trajectories in batch, and compute the exact Bayesian next-token posterior via forward filtering.
-- **`AbstractRNN`** &mdash; Abstract base class to be subclassed when implementing arbitrary, potentially nonlinear, single-layer RNNs. 
-- **`ExactRNN`** &mdash; The exact nonlinear forward-filter implemented as an RNN.
-- **`ModelA`** &mdash; A stable linear RNN, with a forward-filter informed nonlinear readout. Supports creating A* models (i.e., Jacobian-linearized initialization) using`initialize_Astar`, see manuscript for more details on such models.
-- **`ModelB`** &mdash; A stable linear RNN, with an affine softmax readout (`output = softmax(A*latent_state + b)`).
+At the moment, this code does not reproduce the analysis done in the manuscript, but that is something we plan 
+to implement and publish soon. At the moment, this repo simply publishes our JAX-based implentations of 
+RNNs and HMMs. These classes were used in the paper to generate data and validate the theory. 
 
 ## Installation
 
 ```bash
-# clone the repository
-git clone https://github.com/jpughesanford/linear-rnn-filtering
-cd linear-rnn-filtering
-
-# make a local environment, if one does not exist already
-python -m venv .venv
-source .venv/bin/activate
-
-# install the repository
-pip install -e .
-
-# (Optional) To run tests and lint:
-pip install -e ".[dev]"
-pytest
-ruff check src/ tests/
-
-# (Optional) To build in-browser documentation: #TODO implement 
-pip install -e ".[docs]"
-cd docs && make html 
-open build/html/index.html      
+# pip install 
+pip install git+https://github.com/jpughesanford/linear-rnn-filtering.git   
 ```
 
 ## Quick start
 
 ```python
 import numpy as np
-from linear_rnn_filtering import HMMFactory, ModelA, ExactRNN
+from linear_rnn_filtering.hmm import HMMFactory
+from linear_rnn_filtering.rnn import ModelA, ExactRNN
 
 # Create a two-state "dishonest casino" HMM
 hmm = HMMFactory.dishonest_casino()
 
-# Sample emission sequences
+# Sample 100 different emission sequences, each 500 symbols long
 latent, emissions = hmm.sample(batch_size=100, time_steps=500)
 
-# Compute the ground-truth Bayesian posterior
+# Compute the ground-truth, next-token Bayesian posterior over each of the 100 sequences
 latent_posterior, next_token_posterior = hmm.compute_posterior(emissions)
 
 # Create a Model A RNN and train it to match the posterior
 rnn = ModelA(hmm.latent_dim, hmm.emission_dim, seed=0)
 loss = rnn.train_on_posterior(hmm, batch_size=100, time_steps=500, optimization_steps=1000)
 
-# Predict
-Y, X = rnn.predict(emissions)
+# run the RNN, forcing it with the emission sequences. Its output will approximate the true next token posterior
+output_timeseries, latent_timeseries = rnn.predict(emissions)
 
-# Initialize an Astar model from HMM
-rnn_lin = ModelA(hmm.latent_dim, hmm.emission_dim)
-rnn_lin.initialize_Astar(hmm)
-
-# Use initial condition for exact match (no burn-in needed)
-x0 = np.log(hmm.latent_stationary_density)
+# Implement an exact RNN. For the right choice of weights, this RNN can perform forward filtering exactly
 exact = ExactRNN(hmm.latent_dim, hmm.emission_dim)
+
+# Rather than train it, the ideal weights are analytically solvable. Set them using:
 exact.initialize_weights(hmm)
-Y_exact, _ = exact.predict(emissions, x0=x0)
+
+# run the RNN, forcing it with the emission sequences. Its output will equal the true next token posterior
+x0 = np.log(hmm.latent_stationary_density)
+exact_output_timeseries, _ = exact.predict(emissions, x0=x0)
 ```
 
 ## Architecture summary
 
-| Model | Dynamics | Readout | Schema |
-|-------|----------|---------|--------|
-| `ExactRNN` | `x_t = log(A exp(x_{t-1})) + B[:, y_t]` | `C @ softmax(x_t)` | A (stochastic), B (unconstrained), C (stochastic) |
-| `ModelA` | `x_t = A @ x_{t-1} + B[:, y_t]` | `C @ softmax(x_t)` | A (stable/Cayley), B (unconstrained), C (stochastic) |
-| `ModelB` | `x_t = A @ x_{t-1} + B[:, y_t]` | `softmax(C @ x_t + d)` | A (stable/Cayley), B, C, d (unconstrained) |
+| Model | Dynamics                                                 | Readout                                 | Schema                                              |
+|-------|----------------------------------------------------------|-----------------------------------------|-----------------------------------------------------|
+| `ExactRNN` | `latent_t = log(A exp(latent_{t-1})) + B[:, emission_t]` | `readout_t = C @ softmax(latent_t)`     | A (stochastic), B (unconstrained), C (stochastic)   |
+| `ModelA` | `latent_t = A @ latent_{t-1} + B[:, emission_t]`                | `readout_t = C @ softmax(latent_t)`     | A (Schur stable), B (unconstrained), C (stochastic) |
+| `ModelB` | `latent_t = A @ latent_{t-1} + B[:, emission_t]`                | `readout_t = softmax(C @ latent_t + d)` | A (Schur stable), B, C, and d (unconstrained)       |
 
 ## Defining new models
 
-Subclass `AbstractRNN` with a `schema` classmethod and an `integrate` static method:
+When starting this academic venture, we did not know specifically what model architectures we wanted to explore. 
+Consequently, we wrote code that made prototyping different architectures very efficient. To write your own RNN, 
+with whatever latent dynamics and non-linear readout you want, subclass `AbstractRNN` with a `schema` classmethod and 
+an `integrate`static method: (below, we use ``sin`` and ``cos`` just to express that evolution can be nonlinear)
 
 ```python
-from linear_rnn_filtering import AbstractRNN
+from linear_rnn_filtering.rnn import AbstractRNN
+import numpy as np
 
 class MyModel(AbstractRNN):
     @classmethod
@@ -96,12 +79,20 @@ class MyModel(AbstractRNN):
 
     @staticmethod
     def integrate(A, B, C, x_prev, emission_t):
-        x_t = A @ x_prev + B[:, emission_t]
-        y_t = C @ jax.nn.softmax(x_t+d)
+        x_t = A @ np.cos(x_prev) + B[:, emission_t]
+        y_t = C @ np.sin(x_t)
         return x_t, y_t
 ```
 
-Constraint types: `"unconstrained"`, `"stable"` (Cayley), `"stochastic"` (softmax axis=0), `"nonneg"` (squared).
+Often, you want to constrain the weights, such that, for example, ``A`` is stable and the latent dynamics do not blow up. 
+Our code allows you to constrain any weight parameter to be either:
+
+- **`ConstraintType.UNCONSTRAINED`** &mdash; No constraints.
+- **`ConstraintType.STABLE`** &mdash; Only enforcible for square matrices. Under the hood, the matrix ``X=f(Y,Z)`` is represented a function of two unconstrained matrices, ``Y``,``Z``. ``Y`` and ``Z`` are trained and ``X`` remains Schur stable through our choice of ``f``. All stable matrices, including non-normal ones, are representable by ``f``. However, matrices with ``-1`` as an eigenvalue are not representable by ``f``. See manuscript appendix for more details on ``f``. 
+- **`ConstraintType.STOCHASTIC`** &mdash; Under the hood, the matrix ``X=softmax(Y,axis=0)``, where ``Y`` is an unconstrained matrix. 
+- **`ConstraintType.NONNEGATIVE`** &mdash; Under the hood, the matrix ``X=Y**2``, where ``Y`` is an unconstrained matrix. 
+
+Constraints will always be enforced throughout training, and in a way the remains fully JAX-differentiable. 
 
 ## Loss functions supported 
 
@@ -111,7 +102,7 @@ All models support three training objectives:
 - **`LossType.KL`** &mdash; Minimise KL divergence to the exact HMM next-token posterior.
 - **`LossType.HILBERT`** &mdash; Minimise the Hilbert projective metric to the exact HMM next-token posterior.
 
-All accept an optional `x0` argument for initial hidden state.
+All loss functions accept an optional `x0` argument for initial hidden state.
 
 ## License
 

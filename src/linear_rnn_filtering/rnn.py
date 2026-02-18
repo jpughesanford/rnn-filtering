@@ -6,6 +6,7 @@ predicted next-token probability distribution at every time step.
 """
 
 from abc import abstractmethod, ABCMeta
+from collections.abc import Iterable, Callable
 from functools import partial
 
 import jax
@@ -13,13 +14,30 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from jax.nn import logsumexp
+
+from jax.typing import ArrayLike
+
+from .hmm import DiscreteHMM
 from .types import LossType, ConstraintType
 from .utils import DTYPE, params_to_stable_matrix, stable_matrix_to_params
 
-__all__ = ["AbstractRNN","ExactRNN", "ModelA", "ModelB"]
+__all__ = ["AbstractRNN", "ExactRNN", "ModelA", "ModelB"]
 
-def _validate_scheme(schema: list[tuple[str, tuple[int], str]] ) -> bool:
-    """Checks whether schema is valid"""
+
+def _validate_scheme(schema: list[tuple[str, tuple[int], str]]) -> bool:
+    """Check whether a weight schema is valid.
+
+    A valid schema is a list of ``(name, shape, constraint)`` tuples where
+    names are unique strings, shapes are tuples of positive integers, and
+    constraints are :class:`ConstraintType` values. ``STABLE`` constraints
+    additionally require the shape to be square.
+
+    Args:
+        schema (list[tuple[str, tuple[int], ConstraintType]]): Weight schema to validate.
+
+    Returns:
+        bool: True if the schema is valid, False otherwise.
+    """
     names = set()
     for entry in schema:
         if len(entry) != 3:
@@ -41,29 +59,50 @@ def _validate_scheme(schema: list[tuple[str, tuple[int], str]] ) -> bool:
                 return False
     return True
 
-def _weights_needed_to_enforce_constraint(name: str, shape: tuple[int], constraint: ConstraintType = ConstraintType.UNCONSTRAINED)-> list[tuple[str, tuple[int]]]:
-    """Return list of (raw_name, raw_shape) for a single schema entry.
+
+def _weights_needed_to_enforce_constraint(
+    name: str, shape: tuple[int], constraint: ConstraintType = ConstraintType.UNCONSTRAINED
+) -> list[tuple[str, tuple[int]]]:
+    """Return the raw parameter names and shapes needed for a single schema entry.
+
+    For most constraints the raw parameter has the same name and shape.
+    The ``STABLE`` constraint requires two raw parameters (one square matrix
+    and one vector of lower-triangular entries) to parameterise a
+    Cayley-stable matrix.
 
     Args:
-        name (str): Parameter name.
-        shape (tuple[int]): Shape of the parameter.
-        constraint (ConstraintType, optional): Type of constraint ('stable', 'unconstrained', etc.).
+        name (str): Parameter name from the schema.
+        shape (tuple[int]): Shape of the constrained parameter.
+        constraint (ConstraintType, optional): Constraint type. Defaults to ``ConstraintType.UNCONSTRAINED``.
 
     Returns:
-        list[tuple[str, tuple[int]]]: List of raw names and shapes.
+        list[tuple[str, tuple[int]]]: List of ``(raw_name, raw_shape)`` pairs.
     """
     match constraint:
         case ConstraintType.STABLE:
             n = shape[0]
             return [
-            (f"{name}_1", shape),
-            (f"{name}_2", (n * (n - 1) // 2,)),
-        ]
+                (f"{name}_1", shape),
+                (f"{name}_2", (n * (n - 1) // 2,)),
+            ]
         case _:
             return [(name, shape)]
 
+
 def _compute_constrained_weight(name: str, constraint: ConstraintType, raw_weights: dict[str, jax.Array]) -> jax.Array:
-    """Apply the constraint transform for one schema entry."""
+    """Apply the constraint transform for one schema entry.
+
+    Maps raw (unconstrained) weight arrays to a constrained weight array
+    according to the specified constraint type.
+
+    Args:
+        name (str): Parameter name from the schema.
+        constraint (ConstraintType): Constraint type to apply.
+        raw_weights (dict[str, jax.Array]): Dictionary of raw weight arrays.
+
+    Returns:
+        jax.Array: Constrained weight array.
+    """
     match constraint:
         case ConstraintType.UNCONSTRAINED:
             return raw_weights[name]
@@ -73,26 +112,25 @@ def _compute_constrained_weight(name: str, constraint: ConstraintType, raw_weigh
             return jax.nn.softmax(raw_weights[name], axis=0)
         case ConstraintType.NONNEGATIVE:
             return raw_weights[name] ** 2
-    
+
+
 # ---------------------------------------------------------------------------
 # Abstract base
 # ---------------------------------------------------------------------------
+
 
 class AbstractRNN(metaclass=ABCMeta):
     """Base class for all RNN filtering models.
 
     Subclasses must implement:
-        - `schema(n, m)` (classmethod) returning parameter specifications.
-        - `integrate(...)` (staticmethod) defining the recurrence.
-
-    Construction example:
-        rnn = AbstractRNN(latent_dim=2, emission_dim=6, seed=0)
+        - ``schema(latent_dim, emission_dim)`` (classmethod) returning parameter specifications.
+        - ``integrate(..., x_prev, emission_t)`` (staticmethod) defining the recurrence.
 
     Attributes:
         latent_dim (int): Dimensionality of the latent state.
         emission_dim (int): Number of discrete emissions.
-        raw_weights (dict): Raw backend weights (e.g., {"A_1": ..., "A_2": ..., "B": ..., "C": ...}).
-        isFrozen (dict): Boolean map indicating whether each raw weight is frozen.
+        raw_weights (dict[str, jax.Array]): Raw (unconstrained) weight arrays keyed by name.
+        isFrozen (dict[str, bool]): Boolean map indicating whether each raw weight is frozen during training.
     """
 
     def __init__(self, latent_dim: int, emission_dim: int, seed: int = 0, ic_scale: float = 0.01):
@@ -102,91 +140,154 @@ class AbstractRNN(metaclass=ABCMeta):
             latent_dim (int): Dimensionality of the RNN latent state.
             emission_dim (int): Dimensionality of the RNN output.
             seed (int, optional): Random seed for weight initialization. Defaults to 0.
-            ic_scale (float, optional): variance of initial weights.
+            ic_scale (float, optional): Standard deviation of the initial weight distribution. Defaults to 0.01.
 
         Raises:
-            ValueError: If scheme is invalid
+            ValueError: If the schema returned by the subclass is invalid.
         """
-        self.latent_dim = latent_dim
-        self.emission_dim = emission_dim
-        
-        self._schema = self.schema(latent_dim, emission_dim)
+        self.latent_dim: int = latent_dim
+        self.emission_dim: int = emission_dim
+
+        self._schema: list[tuple[str, tuple[int], ConstraintType]] = self.schema(latent_dim, emission_dim)
         if not _validate_scheme(self._schema):
             raise ValueError("Scheme is invalid.")
 
-        self.seed = seed
+        self.seed: int = seed
 
         # compute number of raw weights needed and
         # split rng key into parts for each raw weight
         prng_key = jax.random.PRNGKey(seed)
         raw_schema = [
-            raw_entry
-            for entry in self._schema
-            for raw_entry in _weights_needed_to_enforce_constraint(*entry)
+            raw_entry for entry in self._schema for raw_entry in _weights_needed_to_enforce_constraint(*entry)
         ]
         keys = jax.random.split(prng_key, len(raw_schema))
 
         # Initialize
-        self.raw_weights = {
+        self.raw_weights: dict[str, jax.Array] = {
             raw_name: jax.random.normal(key, raw_shape, dtype=DTYPE) * ic_scale
             for (raw_name, raw_shape), key in zip(raw_schema, keys)
         }
-        self.isFrozen = {name: False for name in self.raw_weights}
+        self.isFrozen: dict[str, bool] = {name: False for name in self.raw_weights}
 
     @classmethod
     @abstractmethod
-    def schema(cls, n, m)-> list[tuple[str, tuple[int], ConstraintType]]:
-        """Return list of (name: str, shape: tuple[int], constraint: ConstraintType) tuples defining network weights."""
+    def schema(cls, latent_dim: int, emission_dim: int) -> list[tuple[str, tuple[int], ConstraintType]]:
+        """Return the weight schema for this architecture.
+
+        Each entry is a ``(name, shape, constraint)`` tuple specifying one
+        logical network weight.
+
+        Args:
+            latent_dim (int): Latent state dimensionality.
+            emission_dim (int): Emission dimensionality.
+
+        Returns:
+            list[tuple[str, tuple[int], ConstraintType]]: Weight schema.
+        """
         raise NotImplementedError
 
     @staticmethod
     @abstractmethod
     def integrate(**kwargs):
-        """Define the recurrence: ``(x_prev, emission_t) -> (x_t, y_t)``."""
+        """Define the recurrence: ``(x_prev, emission_t) -> (x_t, y_t)``.
+
+        Subclasses should define the signature as
+        ``integrate(W1, W2, ..., x_prev, emission_t)`` where the weight
+        arguments match the schema entries in order, followed by the
+        previous latent state and the current emission.
+
+        Args:
+            x_prev (jax.Array): Previous hidden state of shape (latent_dim,).
+            emission_t (jax.Array): Current emission index (scalar int32).
+            **kwargs: Constrained weight arrays as defined by :meth:`schema`.
+
+        Returns:
+            x_t (jax.Array): Updated hidden state of shape (latent_dim,).
+            y_t (jax.Array): Predicted next-emission distribution of shape (emission_dim,).
+        """
         raise NotImplementedError
 
     # ------------------------------------------------------------------
     # Weight management
     # ------------------------------------------------------------------
 
-    def _warn_unknown_keys(self, keys, caller):
+    def _warn_unknown_keys(self, keys: Iterable[str], caller: str) -> None:
+        """Emit a warning if any keys are not recognized raw weight names.
+
+        Args:
+            keys (Iterable[str]): Weight names to check.
+            caller (str): Name of the calling method, used in the warning message.
+        """
         unknown = set(keys) - set(self.raw_weights.keys())
         if unknown:
             import warnings
+
             warnings.warn(f"{caller}: unknown weight names {unknown}", stacklevel=3)
 
-    def freeze(self, weight_names):
-        """Prevent listed raw weights from being updated during training."""
+    def freeze(self, weight_names: Iterable[str]) -> None:
+        """Prevent listed raw weights from being updated during training.
+
+        Frozen weights have their gradients zeroed out by the optimizer.
+
+        Args:
+            weight_names (Iterable[str]): Names of raw weights to freeze.
+        """
         self._warn_unknown_keys(weight_names, "freeze")
         for key in self.isFrozen.keys() & weight_names:
             self.isFrozen[key] = True
 
-    def unfreeze(self, weight_names):
-        """Allow listed raw weights to be updated during training."""
+    def unfreeze(self, weight_names: Iterable[str]) -> None:
+        """Allow listed raw weights to be updated during training.
+
+        Args:
+            weight_names (Iterable[str]): Names of raw weights to unfreeze.
+        """
         self._warn_unknown_keys(weight_names, "unfreeze")
         for key in self.isFrozen.keys() & weight_names:
             self.isFrozen[key] = False
 
-    def set_raw_weights(self, raw_weights):
-        """Overwrite raw weights by name."""
+    def set_raw_weights(self, raw_weights: dict[str, ArrayLike]) -> None:
+        """Overwrite raw weights by name.
+
+        Values are cast to the global ``DTYPE``. Unknown names trigger a warning
+        and are silently skipped.
+
+        Args:
+            raw_weights (dict[str, ArrayLike]): Mapping from raw weight names to new values.
+        """
         self._warn_unknown_keys(raw_weights.keys(), "set_raw_weights")
         for key, value in raw_weights.items():
             if key in self.raw_weights:
                 self.raw_weights[key] = jnp.asarray(value, dtype=DTYPE)
 
     @property
-    def raw_weight_names(self):
-        """Names of weights JAX is optimizing over. Depending on constraints, this can be a larger list than weight_names."""
+    def raw_weight_names(self) -> list[str]:
+        """Names of raw weights JAX is optimizing over.
+
+        Depending on constraints, this can be a larger list than
+        :attr:`weight_names` (e.g. a ``STABLE`` matrix produces two raw entries).
+
+        Returns:
+            list[str]: Raw weight names.
+        """
         return list(self.raw_weights.keys())
 
     @property
-    def weight_names(self):
-        """Names of weights defined in the schema."""
+    def weight_names(self) -> list[str]:
+        """Names of logical weights defined in the schema.
+
+        Returns:
+            list[str]: Schema weight names.
+        """
         return [name for name, _shape, _constraint in self._schema]
 
     @property
-    def weights(self):
-        """Constrained weights dict (schema names -> constrained arrays)."""
+    def weights(self) -> dict[str, jax.Array]:
+        """Constrained weights dict mapping schema names to constrained arrays.
+
+        Returns:
+            dict[str, jax.Array]: Constrained weight arrays.
+        """
         return self._get_constrained_weights(self.raw_weights)
 
     # ------------------------------------------------------------------
@@ -194,12 +295,18 @@ class AbstractRNN(metaclass=ABCMeta):
     # ------------------------------------------------------------------
 
     @classmethod
-    def _get_constrained_weights(cls, raw_weights):
-        """Apply constraint transforms to raw weights. Implemented once in base."""
+    def _get_constrained_weights(cls, raw_weights: dict[str, jax.Array]) -> dict[str, jax.Array]:
+        """Apply constraint transforms to all raw weights.
 
-        # Uses cls.schema(0, 0) to get (name, constraint) pairs, since this
-        # is a cls method and has no reference to self._schema. Shapes are
-        # irrelevant for the transform logic and are inferred from the weights.
+        Uses ``cls.schema(0, 0)`` to obtain ``(name, constraint)`` pairs.
+        Shapes are inferred from the raw weight arrays themselves.
+
+        Args:
+            raw_weights (dict[str, jax.Array]): Raw (unconstrained) weight arrays.
+
+        Returns:
+            dict[str, jax.Array]: Constrained weight arrays keyed by schema name.
+        """
         schema = cls.schema(0, 0)
         result = {}
         for name, _shape, constraint in schema:
@@ -210,8 +317,19 @@ class AbstractRNN(metaclass=ABCMeta):
     # Loss dispatch
     # ------------------------------------------------------------------
 
-    def _resolve_loss(self, loss):
-        """Return (loss_fn, needs_posterior) for a LossType enum value."""
+    def _resolve_loss(self, loss: LossType) -> tuple[Callable, bool]:
+        """Look up the JIT-compiled loss function for a given :class:`LossType`.
+
+        Args:
+            loss (LossType): Loss type enum value.
+
+        Returns:
+            loss_fn (callable): JIT-compiled loss function.
+            needs_posterior (bool): Whether the loss requires ground-truth posterior targets.
+
+        Raises:
+            ValueError: If ``loss`` is not a recognized :class:`LossType`.
+        """
         loss = LossType(loss)
         cls = type(self)
         if loss is LossType.EMISSIONS:
@@ -228,8 +346,20 @@ class AbstractRNN(metaclass=ABCMeta):
 
     @classmethod
     @partial(jax.jit, static_argnums=0)
-    def _forward_scan(cls, raw_weights, emissions, x0):
-        """Run the RNN on a single emission sequence."""
+    def _forward_scan(
+        cls, raw_weights: dict[str, jax.Array], emissions: jax.Array, x0: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        """Run the RNN on a single emission sequence via ``jax.lax.scan``.
+
+        Args:
+            raw_weights (dict[str, jax.Array]): Raw weight arrays.
+            emissions (jax.Array): Emission indices of shape (T,), dtype int32.
+            x0 (jax.Array): Initial hidden state of shape (latent_dim,).
+
+        Returns:
+            Y (jax.Array): Predicted distributions of shape (T, emission_dim).
+            X (jax.Array): Hidden states of shape (T, latent_dim).
+        """
         w = cls._get_constrained_weights(raw_weights)
 
         def step(x_prev, emission_t):
@@ -241,40 +371,51 @@ class AbstractRNN(metaclass=ABCMeta):
 
     @classmethod
     @partial(jax.jit, static_argnums=0)
-    def _batched_forward(cls, raw_weights, emissions, x0):
-        """Vectorised forward pass over a batch of sequences."""
+    def _batched_forward(
+        cls, raw_weights: dict[str, jax.Array], emissions: jax.Array, x0: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        """Vectorised forward pass over a batch of sequences via ``jax.vmap``.
+
+        Args:
+            raw_weights (dict[str, jax.Array]): Raw weight arrays.
+            emissions (jax.Array): Emission indices of shape (B, T), dtype int32.
+            x0 (jax.Array): Initial hidden state of shape (latent_dim,).
+
+        Returns:
+            Y (jax.Array): Predicted distributions of shape (B, T, emission_dim).
+            X (jax.Array): Hidden states of shape (B, T, latent_dim).
+        """
         return jax.vmap(cls._forward_scan, in_axes=(None, 0, None))(raw_weights, emissions, x0)
 
-    def predict(self, emissions, x0=None):
+    def predict(self, emissions: ArrayLike, x0: ArrayLike | None = None) -> tuple[jax.Array, jax.Array]:
         """Predict next-token distributions for a batch of emission sequences.
 
-        Parameters
-        ----------
-        emissions : array-like, shape (B, T)
-        x0 : array-like, shape (latent_dim,), optional
-            Initial hidden state. Defaults to zeros.
+        Args:
+            emissions (ArrayLike): Observed emission indices of shape (B, T).
+            x0 (ArrayLike, optional): Initial hidden state of shape (latent_dim,). Defaults to zeros.
 
-        Returns
-        -------
-        Y : array, shape (B, T, emission_dim)
-        X : array, shape (B, T, latent_dim)
+        Returns:
+            Y (jax.Array): Predicted next-emission distributions of shape (B, T, emission_dim).
+            X (jax.Array): Hidden state trajectories of shape (B, T, latent_dim).
         """
         emissions = jnp.asarray(emissions, dtype=jnp.int32)
         x0 = self._resolve_x0(x0)
         output, latent = self._batched_forward(self.raw_weights, emissions, x0)
         return jnp.array(output), jnp.array(latent)
 
-    def loss(self, emissions, loss=LossType.EMISSIONS, x0=None):
-        """Compute a loss on a batch of emissions.
+    def loss(self, emissions: ArrayLike, loss: LossType = LossType.EMISSIONS, x0: ArrayLike | None = None) -> jax.Array:
+        """Compute a scalar loss on a batch of emissions.
 
-        Parameters
-        ----------
-        emissions : array-like, shape (B, T)
-        loss : LossType
-            One of ``LossType.EMISSIONS``, ``LossType.KL``, ``LossType.HILBERT``.
-            For ``KL`` and ``HILBERT``, ``emissions`` must be accompanied
-            by ``targets`` — use :meth:`eval_loss` for the convenience wrapper.
-        x0 : array-like, shape (latent_dim,), optional
+        Args:
+            emissions (ArrayLike): Observed emission indices of shape (B, T).
+            loss (LossType, optional): Loss type. One of ``LossType.EMISSIONS``,
+                ``LossType.KL``, or ``LossType.HILBERT``. For ``KL`` and ``HILBERT``,
+                ``emissions`` must be accompanied by ``targets`` — use :meth:`eval_loss`
+                for the convenience wrapper. Defaults to ``LossType.EMISSIONS``.
+            x0 (ArrayLike, optional): Initial hidden state of shape (latent_dim,). Defaults to zeros.
+
+        Returns:
+            jax.Array: Scalar loss value.
         """
         emissions = jnp.asarray(emissions, dtype=jnp.int32)
         x0 = self._resolve_x0(x0)
@@ -287,8 +428,23 @@ class AbstractRNN(metaclass=ABCMeta):
 
     @classmethod
     @partial(jax.jit, static_argnums=(0, 4))
-    def _expected_surprisal(cls, raw_weights, emissions, x0, do_average=True):
-        """Mean negative log-likelihood of the next token."""
+    def _expected_surprisal(
+        cls, raw_weights: dict[str, jax.Array], emissions: jax.Array, x0: jax.Array, do_average: bool = True
+    ) -> jax.Array:
+        """Mean negative log-likelihood of the next token.
+
+        Computes ``-log p(y_{t+1} | y_{0:t})`` averaged over batch and time.
+
+        Args:
+            raw_weights (dict[str, jax.Array]): Raw weight arrays.
+            emissions (jax.Array): Emission indices of shape (B, T), dtype int32.
+            x0 (jax.Array): Initial hidden state of shape (latent_dim,).
+            do_average (bool, optional): If True, return the scalar mean. If False,
+                return per-timestep values. Defaults to True.
+
+        Returns:
+            jax.Array: Scalar mean NLL if ``do_average`` is True, otherwise array of shape (B, T-1).
+        """
         output, _ = cls._batched_forward(raw_weights, emissions, x0)
         output = output[:, :-1, :]
         next_token = emissions[:, 1:]
@@ -298,8 +454,29 @@ class AbstractRNN(metaclass=ABCMeta):
 
     @classmethod
     @partial(jax.jit, static_argnums=(0, 5))
-    def _expected_kl_divergence(cls, raw_weights, emissions, targets, x0, do_average=True):
-        """KL divergence from the ground-truth posterior to the RNN prediction."""
+    def _expected_kl_divergence(
+        cls,
+        raw_weights: dict[str, jax.Array],
+        emissions: jax.Array,
+        targets: jax.Array,
+        x0: jax.Array,
+        do_average: bool = True,
+    ) -> jax.Array:
+        """KL divergence from the ground-truth posterior to the RNN prediction.
+
+        Computes ``KL(p_target || p_rnn)`` at each time step.
+
+        Args:
+            raw_weights (dict[str, jax.Array]): Raw weight arrays.
+            emissions (jax.Array): Emission indices of shape (B, T), dtype int32.
+            targets (jax.Array): Ground-truth posterior distributions of shape (B, T, emission_dim).
+            x0 (jax.Array): Initial hidden state of shape (latent_dim,).
+            do_average (bool, optional): If True, return the scalar mean. If False,
+                return per-timestep values. Defaults to True.
+
+        Returns:
+            jax.Array: Scalar mean KL if ``do_average`` is True, otherwise array of shape (B, T).
+        """
         p_rnn, _ = cls._batched_forward(raw_weights, emissions, x0)
         eps = 1e-12
         p_rnn = p_rnn / jnp.sum(p_rnn, axis=-1, keepdims=True)
@@ -309,8 +486,30 @@ class AbstractRNN(metaclass=ABCMeta):
 
     @classmethod
     @partial(jax.jit, static_argnums=(0, 5))
-    def _expected_hilbert_distance(cls, raw_weights, emissions, targets, x0, do_average=True):
-        """Hilbert projective metric between RNN output and target distributions."""
+    def _expected_hilbert_distance(
+        cls,
+        raw_weights: dict[str, jax.Array],
+        emissions: jax.Array,
+        targets: jax.Array,
+        x0: jax.Array,
+        do_average: bool = True,
+    ) -> jax.Array:
+        """Hilbert projective metric between RNN output and target distributions.
+
+        The Hilbert metric is defined as
+        ``max_i log(p_rnn_i / p_target_i) - min_i log(p_rnn_i / p_target_i)``.
+
+        Args:
+            raw_weights (dict[str, jax.Array]): Raw weight arrays.
+            emissions (jax.Array): Emission indices of shape (B, T), dtype int32.
+            targets (jax.Array): Ground-truth posterior distributions of shape (B, T, emission_dim).
+            x0 (jax.Array): Initial hidden state of shape (latent_dim,).
+            do_average (bool, optional): If True, return the scalar mean. If False,
+                return per-timestep values. Defaults to True.
+
+        Returns:
+            jax.Array: Scalar mean Hilbert distance if ``do_average`` is True, otherwise array of shape (B, T).
+        """
         p_rnn, _ = cls._batched_forward(raw_weights, emissions, x0)
         eps = 1e-16
         p_rnn = jnp.clip(p_rnn, eps, None)
@@ -324,19 +523,37 @@ class AbstractRNN(metaclass=ABCMeta):
     # ------------------------------------------------------------------
 
     def train(
-        self, hmm, *, loss=LossType.EMISSIONS, batch_size=100, time_steps=1000,
-        num_epochs=1, learning_rate=2e-2, optimization_steps=2000,
-        print_every=100, x0=None,
-    ):
-        """Train the model.
+        self,
+        hmm: DiscreteHMM,
+        *,
+        loss: LossType = LossType.EMISSIONS,
+        batch_size: int = 100,
+        time_steps: int = 1000,
+        num_epochs: int = 1,
+        learning_rate: float = 2e-2,
+        optimization_steps: int = 2000,
+        print_every: int = 100,
+        x0: ArrayLike | None = None,
+    ) -> np.ndarray:
+        """Train the model on data sampled from an HMM.
 
-        Parameters
-        ----------
-        hmm : DiscreteHMM
-        loss : LossType
-            ``LossType.EMISSIONS`` — minimise next-token negative log-likelihood.
-            ``LossType.KL``        — minimise KL divergence to exact HMM posterior.
-            ``LossType.HILBERT``   — minimise Hilbert projective metric to posterior.
+        At each epoch, a fresh batch of trajectories is sampled from ``hmm``.
+        An Adam optimizer is used with optional weight freezing.
+
+        Args:
+            hmm (DiscreteHMM): HMM instance used to generate training data.
+            loss (LossType, optional): Training objective. One of ``LossType.EMISSIONS``,
+                ``LossType.KL``, or ``LossType.HILBERT``. Defaults to ``LossType.EMISSIONS``.
+            batch_size (int, optional): Number of independent trajectories per epoch. Defaults to 100.
+            time_steps (int, optional): Length of each sampled trajectory. Defaults to 1000.
+            num_epochs (int, optional): Number of data-resampling epochs. Defaults to 1.
+            learning_rate (float, optional): Adam learning rate. Defaults to 2e-2.
+            optimization_steps (int, optional): Gradient steps per epoch. Defaults to 2000.
+            print_every (int, optional): Print loss every this many steps. Defaults to 100.
+            x0 (ArrayLike, optional): Initial hidden state of shape (latent_dim,). Defaults to zeros.
+
+        Returns:
+            loss_history (numpy.ndarray): Loss values of shape (optimization_steps, num_epochs).
         """
         loss_fn, needs_posterior = self._resolve_loss(loss)
         return self._train(
@@ -356,14 +573,31 @@ class AbstractRNN(metaclass=ABCMeta):
     # Evaluation
     # ------------------------------------------------------------------
 
-    def eval_loss(self, hmm, *, loss=LossType.EMISSIONS, batch_size=100, time_steps=1000, x0=None):
-        """Per-timestep loss (not averaged) on freshly sampled data.
+    def eval_loss(
+        self,
+        hmm: DiscreteHMM,
+        *,
+        loss: LossType = LossType.EMISSIONS,
+        batch_size: int = 100,
+        time_steps: int = 1000,
+        x0: ArrayLike | None = None,
+    ) -> jax.Array:
+        """Evaluate per-timestep loss (not averaged) on freshly sampled data.
 
-        Parameters
-        ----------
-        hmm : DiscreteHMM
-        loss : LossType
-            ``LossType.EMISSIONS``, ``LossType.KL``, or ``LossType.HILBERT``.
+        Samples a new batch of trajectories from ``hmm`` and returns the
+        unaggregated loss at every time step, which is useful for
+        analysing convergence along the sequence.
+
+        Args:
+            hmm (DiscreteHMM): HMM instance used to generate evaluation data.
+            loss (LossType, optional): Evaluation objective. One of ``LossType.EMISSIONS``,
+                ``LossType.KL``, or ``LossType.HILBERT``. Defaults to ``LossType.EMISSIONS``.
+            batch_size (int, optional): Number of independent trajectories. Defaults to 100.
+            time_steps (int, optional): Length of each sampled trajectory. Defaults to 1000.
+            x0 (ArrayLike, optional): Initial hidden state of shape (latent_dim,). Defaults to zeros.
+
+        Returns:
+            jax.Array: Per-timestep loss values of shape (B, T) or (B, T-1) depending on loss type.
         """
         loss_fn, needs_posterior = self._resolve_loss(loss)
         _, emissions = hmm.sample(batch_size, time_steps)
@@ -378,15 +612,53 @@ class AbstractRNN(metaclass=ABCMeta):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _resolve_x0(self, x0):
+    def _resolve_x0(self, x0: ArrayLike | None) -> jax.Array:
+        """Return a JAX array for the initial hidden state, defaulting to zeros.
+
+        Args:
+            x0 (ArrayLike or None): Initial hidden state. If None, returns a zero vector.
+
+        Returns:
+            jax.Array: Initial hidden state of shape (latent_dim,).
+        """
         if x0 is None:
             return jnp.zeros(self.latent_dim, dtype=DTYPE)
         return jnp.asarray(x0, dtype=DTYPE)
 
     def _train(
-        self, hmm, *, loss_fn, needs_posterior, batch_size, time_steps,
-        num_epochs, learning_rate, optimization_steps, print_every, x0=None,
-    ):
+        self,
+        hmm: DiscreteHMM,
+        *,
+        loss_fn: Callable,
+        needs_posterior: bool,
+        batch_size: int,
+        time_steps: int,
+        num_epochs: int,
+        learning_rate: float,
+        optimization_steps: int,
+        print_every: int,
+        x0: ArrayLike | None = None,
+    ) -> np.ndarray:
+        """Inner training loop called by :meth:`train`.
+
+        Handles data sampling, optimizer construction, and gradient updates.
+        Frozen weights are masked via ``optax.set_to_zero()``.
+
+        Args:
+            hmm (DiscreteHMM): HMM instance used to generate training data.
+            loss_fn (Callable): JIT-compiled loss function.
+            needs_posterior (bool): Whether the loss requires ground-truth posterior targets.
+            batch_size (int): Number of independent trajectories per epoch.
+            time_steps (int): Length of each sampled trajectory.
+            num_epochs (int): Number of data-resampling epochs.
+            learning_rate (float): Adam learning rate.
+            optimization_steps (int): Gradient steps per epoch.
+            print_every (int): Print loss every this many steps.
+            x0 (array-like, optional): Initial hidden state. Defaults to zeros.
+
+        Returns:
+            loss_history (numpy.ndarray): Loss values of shape (optimization_steps, num_epochs).
+        """
         loss_history = np.zeros((optimization_steps, num_epochs))
         x0_vec = self._resolve_x0(x0)
 
@@ -399,12 +671,14 @@ class AbstractRNN(metaclass=ABCMeta):
 
             if needs_posterior:
                 _, targets = hmm.compute_posterior(emissions)
+
                 def update(raw_weights, state):
                     val, grads = jax.value_and_grad(loss_fn)(raw_weights, emissions_jax, targets, x0_vec)
                     updates, state = optimizer.update(grads, state, raw_weights)
                     raw_weights = optax.apply_updates(raw_weights, updates)
                     return raw_weights, state, val
             else:
+
                 def update(raw_weights, state):
                     val, grads = jax.value_and_grad(loss_fn)(raw_weights, emissions_jax, x0_vec)
                     updates, state = optimizer.update(grads, state, raw_weights)
@@ -419,19 +693,31 @@ class AbstractRNN(metaclass=ABCMeta):
 
         return loss_history
 
+
 # ---------------------------------------------------------------------------
 # ExactRNN  (ground-truth nonlinear filter)
 # ---------------------------------------------------------------------------
 
+
 class ExactRNN(AbstractRNN):
     """Exact forward-filter dynamics: ``x_t = log(A exp(x_{t-1})) + B[:, y_t]``.
 
-    Raw weights A and C are stored in unconstrained log-space and
+    Raw weights ``A`` and ``C`` are stored in unconstrained log-space and
     softmax-normalised to column-stochastic matrices before the scan.
     """
 
     @classmethod
-    def schema(cls, n, m):
+    def schema(cls, n: int, m: int) -> list[tuple[str, tuple[int], ConstraintType]]:
+        """Return the weight schema for the exact filter.
+
+        Args:
+            n (int): Latent state dimensionality.
+            m (int): Emission dimensionality.
+
+        Returns:
+            list[tuple[str, tuple[int], ConstraintType]]: Weight schema with entries
+                for ``A`` (stochastic), ``B`` (unconstrained), and ``C`` (stochastic).
+        """
         return [
             ("A", (n, n), ConstraintType.STOCHASTIC),
             ("B", (n, m), ConstraintType.UNCONSTRAINED),
@@ -439,19 +725,46 @@ class ExactRNN(AbstractRNN):
         ]
 
     @staticmethod
-    def integrate(A, B, C, x_prev, emission_t):
+    def integrate(
+        A: jax.Array, B: jax.Array, C: jax.Array, x_prev: jax.Array, emission_t: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        """Exact nonlinear forward-filter recurrence.
+
+        Computes ``x_t = log(A exp(x_{t-1})) + B[:, y_t]`` (normalised in
+        log-space) and reads out via ``y_t = C softmax(x_t)``.
+
+        Args:
+            A (jax.Array): Column-stochastic transfer matrix of shape (n, n).
+            B (jax.Array): Log-emission matrix of shape (n, m).
+            C (jax.Array): Column-stochastic readout matrix of shape (m, n).
+            x_prev (jax.Array): Previous log-posterior of shape (n,).
+            emission_t (jax.Array): Current emission index (scalar int32).
+
+        Returns:
+            x_t (jax.Array): Updated log-posterior of shape (n,).
+            y_t (jax.Array): Predicted next-emission distribution of shape (m,).
+        """
         x_t = jnp.log(A @ jnp.exp(x_prev)) + B[:, emission_t]
         x_t = x_t - logsumexp(x_t)
         y_t = C @ jax.nn.softmax(x_t)
         return x_t, y_t
 
-    def initialize_weights(self, hmm):
-        """Set raw weights to the true HMM values."""
-        self.set_raw_weights({
-            "A": np.log(hmm.transfer_matrix),
-            "B": np.log(hmm.emission_matrix.T),
-            "C": np.log(hmm.emission_matrix @ hmm.transfer_matrix),
-        })
+    def initialize_weights(self, hmm: DiscreteHMM) -> None:
+        """Set raw weights to the true HMM parameter values.
+
+        This produces an RNN that exactly reproduces the HMM forward
+        filter, and is useful as an upper-bound baseline.
+
+        Args:
+            hmm (DiscreteHMM): Source HMM whose parameters are copied.
+        """
+        self.set_raw_weights(
+            {
+                "A": np.log(hmm.transfer_matrix),
+                "B": np.log(hmm.emission_matrix.T),
+                "C": np.log(hmm.emission_matrix @ hmm.transfer_matrix),
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -460,14 +773,27 @@ class ExactRNN(AbstractRNN):
 
 
 class ModelA(AbstractRNN):
-    """Linear RNN: ``x_t = A x_{t-1} + B[:, y_t]``; ``p_t = C softmax(x_t)``.
+    """Linear RNN with stable latent dynamics and stochastic readout.
 
-    A is parameterised via the Cayley transform to guarantee spectral
-    radius <= 1.  C is softmax-normalised to a column-stochastic matrix.
+    Recurrence: ``x_t = A x_{t-1} + B[:, y_t]``;
+    readout: ``p_t = C softmax(x_t)``.
+
+    ``A`` is parameterised via the Cayley transform to guarantee spectral
+    radius <= 1.  ``C`` is softmax-normalised to a column-stochastic matrix.
     """
 
     @classmethod
-    def schema(cls, n, m):
+    def schema(cls, n: int, m: int) -> list[tuple[str, tuple[int], ConstraintType]]:
+        """Return the weight schema for Model A.
+
+        Args:
+            n (int): Latent state dimensionality.
+            m (int): Emission dimensionality.
+
+        Returns:
+            list[tuple[str, tuple[int], ConstraintType]]: Weight schema with entries
+                for ``A`` (stable), ``B`` (unconstrained), and ``C`` (stochastic).
+        """
         return [
             ("A", (n, n), ConstraintType.STABLE),
             ("B", (n, m), ConstraintType.UNCONSTRAINED),
@@ -475,16 +801,39 @@ class ModelA(AbstractRNN):
         ]
 
     @staticmethod
-    def integrate(A, B, C, x_prev, emission_t):
+    def integrate(
+        A: jax.Array, B: jax.Array, C: jax.Array, x_prev: jax.Array, emission_t: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        """Linear recurrence with stochastic readout.
+
+        Computes ``x_t = A x_{t-1} + B[:, y_t]`` and reads out via
+        ``y_t = C softmax(x_t)``.
+
+        Args:
+            A (jax.Array): Stable dynamics matrix of shape (n, n).
+            B (jax.Array): Input embedding matrix of shape (n, m).
+            C (jax.Array): Column-stochastic readout matrix of shape (m, n).
+            x_prev (jax.Array): Previous hidden state of shape (n,).
+            emission_t (jax.Array): Current emission index (scalar int32).
+
+        Returns:
+            x_t (jax.Array): Updated hidden state of shape (n,).
+            y_t (jax.Array): Predicted next-emission distribution of shape (m,).
+        """
         x_t = A @ x_prev + B[:, emission_t]
         y_t = C @ jax.nn.softmax(x_t)
         return x_t, y_t
 
-    def initialize_Astar(self, hmm):
+    def initialize_Astar(self, hmm: DiscreteHMM) -> None:
         """Initialize raw weights from an HMM via log-probability linearization.
 
         Computes the Jacobian of the log-transfer map at the stationary
-        distribution and sets A, B, C accordingly.
+        distribution and sets ``A``, ``B``, ``C`` accordingly. This provides
+        a principled warm-start that approximates the exact filter dynamics
+        near stationarity.
+
+        Args:
+            hmm (DiscreteHMM): Source HMM whose parameters define the linearization point.
         """
         T = hmm.transfer_matrix
         E = hmm.emission_matrix
@@ -500,12 +849,14 @@ class ModelA(AbstractRNN):
         C_mat = E @ T
 
         A1, A2 = stable_matrix_to_params(jnp.asarray(A_mat, dtype=DTYPE))
-        self.set_raw_weights({
-            "A_1": np.array(A1),
-            "A_2": np.array(A2),
-            "B": B_mat,
-            "C": np.log(C_mat),
-        })
+        self.set_raw_weights(
+            {
+                "A_1": np.array(A1),
+                "A_2": np.array(A2),
+                "B": B_mat,
+                "C": np.log(C_mat),
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -514,13 +865,27 @@ class ModelA(AbstractRNN):
 
 
 class ModelB(AbstractRNN):
-    """Linear RNN with bias in readout: ``x_t = A x_{t-1} + B[:, y_t]``; ``p_t = softmax(C x_t + d)``.
+    """Linear RNN with stable latent dynamics and affine softmax readout.
 
-    A is Cayley-stable.  The output bias ``d`` allows a richer readout mapping.
+    Recurrence: ``x_t = A x_{t-1} + B[:, y_t]``;
+    readout: ``p_t = softmax(C x_t + d)``.
+
+    ``A`` is Cayley-stable. The output bias ``d`` allows a richer readout mapping
+    compared to :class:`ModelA`.
     """
 
     @classmethod
-    def schema(cls, n, m):
+    def schema(cls, n: int, m: int) -> list[tuple[str, tuple[int], ConstraintType]]:
+        """Return the weight schema for Model B.
+
+        Args:
+            n (int): Latent state dimensionality.
+            m (int): Emission dimensionality.
+
+        Returns:
+            list[tuple[str, tuple[int], ConstraintType]]: Weight schema with entries
+                for ``A`` (stable), ``B`` (unconstrained), ``C`` (unconstrained), and ``d`` (unconstrained).
+        """
         return [
             ("A", (n, n), ConstraintType.STABLE),
             ("B", (n, m), ConstraintType.UNCONSTRAINED),
@@ -529,7 +894,26 @@ class ModelB(AbstractRNN):
         ]
 
     @staticmethod
-    def integrate(A, B, C, d, x_prev, emission_t):
+    def integrate(
+        A: jax.Array, B: jax.Array, C: jax.Array, d: jax.Array, x_prev: jax.Array, emission_t: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        """Linear recurrence with affine softmax readout.
+
+        Computes ``x_t = A x_{t-1} + B[:, y_t]`` and reads out via
+        ``y_t = softmax(C x_t + d)``.
+
+        Args:
+            A (jax.Array): Stable dynamics matrix of shape (n, n).
+            B (jax.Array): Input embedding matrix of shape (n, m).
+            C (jax.Array): Readout weight matrix of shape (m, n).
+            d (jax.Array): Readout bias vector of shape (m,).
+            x_prev (jax.Array): Previous hidden state of shape (n,).
+            emission_t (jax.Array): Current emission index (scalar int32).
+
+        Returns:
+            x_t (jax.Array): Updated hidden state of shape (n,).
+            y_t (jax.Array): Predicted next-emission distribution of shape (m,).
+        """
         x_t = A @ x_prev + B[:, emission_t]
         y_t = jax.nn.softmax(C @ x_t + d)
         return x_t, y_t

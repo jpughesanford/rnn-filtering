@@ -5,9 +5,10 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import numpy as np
-from numpy.typing import NDArray
+from jax.typing import ArrayLike
 
 __all__ = ["DiscreteHMM", "HMMFactory"]
+
 
 class DiscreteHMM:
     """A discrete-state, discrete-emission Hidden Markov Model.
@@ -23,19 +24,20 @@ class DiscreteHMM:
     """
 
     def __init__(self, latent_dim: int, emission_dim: int) -> None:
-        """Initialize a discrete HMM.
+        """Initialize a discrete HMM. Transfer and emission matrices are initialized randomly,
+        and should be set with :meth:`set_transfer_matrix` and :meth:`set_emission_matrix`, respectively.
 
         Args:
             latent_dim (int): Number of hidden states.
             emission_dim (int): Number of emission states.
         """
-        self.latent_dim = latent_dim
-        self.emission_dim = emission_dim
+        self.latent_dim: int = latent_dim
+        self.emission_dim: int = emission_dim
 
-        self.transfer_matrix = None
-        self.emission_matrix = None
-        self.latent_stationary_density = None
-        self.emission_stationary_density = None
+        self.transfer_matrix: jax.Array | None = None
+        self.emission_matrix: jax.Array | None = None
+        self.latent_stationary_density: jax.Array | None = None
+        self.emission_stationary_density: jax.Array | None = None
 
         transfer_matrix = np.random.rand(latent_dim, latent_dim)
         transfer_matrix = transfer_matrix / transfer_matrix.sum(axis=0, keepdims=True)
@@ -73,11 +75,11 @@ class DiscreteHMM:
             key,
         )
 
-    def compute_posterior(self, emissions: NDArray[float]) -> tuple[jax.Array, jax.Array]:
+    def compute_posterior(self, emissions: ArrayLike) -> tuple[jax.Array, jax.Array]:
         """Compute exact forward-filtered posteriors.
 
         Args:
-            emissions (NDArray[float]): Observed emission indices, shape (batch_size, time_steps).
+            emissions (ArrayLike): Observed emission indices, shape (batch_size, time_steps).
 
         Returns:
             latent_posterior (jax.Array): Posterior over hidden states, shape (batch_size, time_steps, latent_dim).
@@ -95,14 +97,14 @@ class DiscreteHMM:
         )
         return latent_posterior, next_emission_posterior
 
-    def set_transfer_matrix(self, transfer_matrix: NDArray[float]) -> None:
+    def set_transfer_matrix(self, transfer_matrix: ArrayLike) -> None:
         """Set the latent-to-latent transition matrix.
 
         Validates column-stochasticity, computes the stationary
         distribution via eigendecomposition, and stores both as JAX arrays.
 
         Args:
-            transfer_matrix (NDArray[float]): Column-stochastic transition matrix of shape (latent_dim, latent_dim).
+            transfer_matrix (ArrayLike): Column-stochastic transition matrix of shape (latent_dim, latent_dim).
 
         Raises:
             AssertionError: If the matrix has the wrong shape, is not column-stochastic,
@@ -119,14 +121,14 @@ class DiscreteHMM:
         self.transfer_matrix = jnp.asarray(transfer_matrix)
         self.latent_stationary_density = jnp.asarray(stationary)
 
-    def set_emission_matrix(self, emission_matrix: NDArray[float]) -> None:
+    def set_emission_matrix(self, emission_matrix: ArrayLike) -> None:
         """Set the latent-to-emission matrix.
 
         Validates column-stochasticity and stores the matrix as a JAX
         array. Also recomputes the marginal emission distribution.
 
         Args:
-            emission_matrix (NDArray[float]): Column-stochastic emission matrix of shape (emission_dim, latent_dim).
+            emission_matrix (ArrayLike): Column-stochastic emission matrix of shape (emission_dim, latent_dim).
 
         Raises:
             AssertionError: If the matrix has the wrong shape or is not column-stochastic.
@@ -242,14 +244,22 @@ class HMMFactory:
             DiscreteHMM: HMM instance
         """
         hmm = DiscreteHMM(2, 6)
-        hmm.set_transfer_matrix(np.array([
-            [0.95, 0.10],
-            [0.05, 0.90],
-        ]))
-        hmm.set_emission_matrix(np.array([
-            [1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6],
-            [1 / 10, 1 / 10, 1 / 10, 1 / 10, 1 / 10, 1 / 2],
-        ]).T)
+        hmm.set_transfer_matrix(
+            np.array(
+                [
+                    [0.95, 0.10],
+                    [0.05, 0.90],
+                ]
+            )
+        )
+        hmm.set_emission_matrix(
+            np.array(
+                [
+                    [1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6],
+                    [1 / 10, 1 / 10, 1 / 10, 1 / 10, 1 / 10, 1 / 2],
+                ]
+            ).T
+        )
         return hmm
 
     @staticmethod

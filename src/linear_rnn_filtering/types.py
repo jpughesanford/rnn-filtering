@@ -1,9 +1,9 @@
-"""A collection of various types used throughout the library.
-"""
+"""Enum types used throughout the library for loss selection and weight constraints."""
 
 from enum import Enum
 
-__all__ = ["LossType","ConstraintType"]
+__all__ = ["LossType", "ConstraintType"]
+
 
 class LossType(str, Enum):
     """Training / evaluation objective.
@@ -13,9 +13,11 @@ class LossType(str, Enum):
         KL: KL divergence to ground-truth posterior.
         HILBERT: Hilbert projective distance to posterior.
     """
+
     EMISSIONS = "emissions"
     KL = "kl"
     HILBERT = "hilbert"
+
 
 class ConstraintType(str, Enum):
     """Constraints on network weights.
@@ -26,8 +28,8 @@ class ConstraintType(str, Enum):
         STOCHASTIC: Non-negative and columns sum to one.
         NONNEGATIVE: Non-negative.
     """
+
     UNCONSTRAINED = "unconstrained"
     STABLE = "stable"
     STOCHASTIC = "stochastic"
     NONNEGATIVE = "nonnegative"
-

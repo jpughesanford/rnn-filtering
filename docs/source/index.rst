@@ -5,17 +5,23 @@ This repository provides the base code that was used in [submitted manuscript] t
 investigate the ability of Recurrent Neural Networks (RNNs) with linear latent dynamics to
 perform next token prediction on sequences sampled from Hidden Markov Models (HMMs).
 
-The package includes code for spinning up
-
-- discrete-time, discrete-space HMMs
-- an ExactRNN, which perfectly performs forward filters on HMM outputs.
-- Linear RNNs, in particular those that of type  Model A or Model B (please see manuscript)
-
-The RNN code is written quite generally and can be used to integrate generic single layer RNNs, including those with nonlinear latent dynamics
-
-
 For more information on this repository, please consult the :doc:`README`.
 
+The repository is structured into three submodules: rnn, hmm, and types. Types holds
+general enums, like those used to define supported loss-functions and supported constraints
+on training variables.
+
+The hmm modules contains classes:
+
+- **DiscreteHMM**: Simulate a discrete HMM, sample hidden/emission trajectories in batch, and compute the exact Bayesian next-token posterior via forward filtering.
+- **HMMFactory**: A factory pattern class, used to quickly instantiate common HMM types
+
+The rnn module contains classes:
+
+- **AbstractRNN**: Abstract base class to be subclassed when implementing arbitrary, potentially nonlinear, single-layer RNNs.
+- **ExactRNN**: The exact nonlinear forward-filter implemented as an RNN.
+- **ModelA**: A stable linear RNN, with a forward-filter informed nonlinear readout. Supports creating A* models (i.e., Jacobian-linearized initialization) using :meth:`initialize_Astar`, see manuscript for more details on such models.
+- **ModelB**: A stable linear RNN, with an affine softmax readout (`output = softmax(A*latent_state + b)`).
 
 API Reference
 =============
