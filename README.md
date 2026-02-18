@@ -62,8 +62,8 @@ exact_output_timeseries, _ = exact.predict(emissions, x0=x0)
 
 When starting this academic venture, we did not know specifically what model architectures we wanted to explore. 
 Consequently, we wrote code that made prototyping different architectures very efficient. To write your own RNN, 
-with whatever latent dynamics and non-linear readout you want, subclass `AbstractRNN` with a `schema` classmethod and 
-an `integrate`static method: (below, we use ``sin`` and ``cos`` just to express that evolution can be nonlinear)
+with whatever latent dynamics and non-linear readout you want, subclass `AbstractRNN` with `schema` and `integrate`
+static methods: (below, we use ``sin`` and ``cos`` just to express that evolution can be nonlinear)
 
 ```python
 from linear_rnn_filtering.types import LossType, ConstraintType
@@ -71,12 +71,12 @@ from linear_rnn_filtering.rnn import AbstractRNN
 import jax.numpy as jnp
 
 class MyNonlinearModel(AbstractRNN):
-    @classmethod
-    def schema(cls, n, m):
+    @staticmethod
+    def schema(n, m):
         return [
-            ("A", (n, n), ConstraintType.STABLE),        # Cayley-parameterised
-            ("B", (n, m), ConstraintType.UNCONSTRAINED),  # free parameters
-            ("C", (m, n), ConstraintType.NONNEGATIVE),     # softmax-normalised columns
+            ("A", (n, n), ConstraintType.STABLE),        
+            ("B", (n, m), ConstraintType.UNCONSTRAINED), 
+            ("C", (m, n), ConstraintType.NONNEGATIVE),    
         ]
 
     @staticmethod

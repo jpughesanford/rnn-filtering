@@ -23,7 +23,7 @@ from .utils import DTYPE, params_to_stable_matrix, stable_matrix_to_params
 __all__ = ["AbstractRNN", "ExactRNN", "ModelA", "ModelB"]
 
 
-def _validate_scheme(schema: list[tuple[str, tuple[int], str]]) -> bool:
+def _validate_scheme(schema: list[tuple[str, tuple[int,...], str]]) -> bool:
     """Check whether a weight schema is valid.
 
     A valid schema is a list of ``(name, shape, constraint)`` tuples where
@@ -121,7 +121,7 @@ class AbstractRNN(metaclass=ABCMeta):
     """Base class for all RNN filtering models.
 
     Subclasses must implement:
-        - ``schema(latent_dim, emission_dim)`` (classmethod) returning parameter specifications.
+        - ``schema(latent_dim, emission_dim)`` (staticmethod) returning parameter specifications.
         - ``integrate(..., x_prev, emission_t)`` (staticmethod) defining the recurrence.
 
     Attributes:
@@ -167,9 +167,9 @@ class AbstractRNN(metaclass=ABCMeta):
         }
         self.isFrozen: dict[str, bool] = dict.fromkeys(self.raw_weights, False)
 
-    @classmethod
+    @staticmethod
     @abstractmethod
-    def schema(cls, latent_dim: int, emission_dim: int) -> list[tuple[str, tuple[int], ConstraintType]]:
+    def schema(latent_dim: int, emission_dim: int) -> list[tuple[str, tuple[int,...], ConstraintType]]:
         """Return the weight schema for this architecture.
 
         Each entry is a ``(name, shape, constraint)`` tuple specifying one
@@ -180,7 +180,7 @@ class AbstractRNN(metaclass=ABCMeta):
             emission_dim (int): Emission dimensionality.
 
         Returns:
-            list[tuple[str, tuple[int], ConstraintType]]: Weight schema.
+            list[tuple[str, tuple[int,...], ConstraintType]]: Weight schema.
         """
         raise NotImplementedError
 
@@ -710,8 +710,8 @@ class ExactRNN(AbstractRNN):
     softmax-normalised to column-stochastic matrices before the scan.
     """
 
-    @classmethod
-    def schema(cls, n: int, m: int) -> list[tuple[str, tuple[int], ConstraintType]]:
+    @staticmethod
+    def schema( n: int, m: int) -> list[tuple[str, tuple[int,...], ConstraintType]]:
         """Return the weight schema for the exact filter.
 
         Args:
@@ -786,8 +786,8 @@ class ModelA(AbstractRNN):
     radius <= 1.  ``C`` is softmax-normalised to a column-stochastic matrix.
     """
 
-    @classmethod
-    def schema(cls, n: int, m: int) -> list[tuple[str, tuple[int], ConstraintType]]:
+    @staticmethod
+    def schema(n: int, m: int) -> list[tuple[str, tuple[int,...], ConstraintType]]:
         """Return the weight schema for Model A.
 
         Args:
@@ -878,8 +878,8 @@ class ModelB(AbstractRNN):
     compared to :class:`ModelA`.
     """
 
-    @classmethod
-    def schema(cls, n: int, m: int) -> list[tuple[str, tuple[int], ConstraintType]]:
+    @staticmethod
+    def schema(n: int, m: int) -> list[tuple[str, tuple[int,...], ConstraintType]]:
         """Return the weight schema for Model B.
 
         Args:
