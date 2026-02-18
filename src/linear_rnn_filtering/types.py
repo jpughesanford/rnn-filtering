@@ -6,30 +6,24 @@ __all__ = ["LossType", "ConstraintType"]
 
 
 class LossType(str, Enum):
-    """Training / evaluation objective.
-
-    Attributes:
-        EMISSIONS: Next-token negative log-likelihood.
-        KL: KL divergence to ground-truth posterior.
-        HILBERT: Hilbert projective distance to posterior.
-    """
+    """Training / evaluation objective."""
 
     EMISSIONS = "emissions"
+    """Next-token negative log-likelihood."""
     KL = "kl"
+    """KL divergence to ground-truth posterior."""
     HILBERT = "hilbert"
+    """Hilbert projective distance to posterior."""
 
 
 class ConstraintType(str, Enum):
-    """Constraints on network weights.
-
-    Attributes:
-        UNCONSTRAINED: Default. No constraint.
-        STABLE: all eigenvalues have modulus less than or equal to one
-        STOCHASTIC: Non-negative and columns sum to one.
-        NONNEGATIVE: Non-negative.
-    """
+    """Constraints on network weights."""
 
     UNCONSTRAINED = "unconstrained"
+    """Default. No constraint."""
     STABLE = "stable"
+    """All eigenvalues have modulus less than or equal to one."""
     STOCHASTIC = "stochastic"
+    """Non-negative and columns sum to one."""
     NONNEGATIVE = "nonnegative"
+    """Non-negative."""
