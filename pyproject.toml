@@ -61,3 +61,7 @@ select = [
     "ARG",    # unused args
     "N",      # naming
 ]
+ignore = [ # upper case letters are often used to represent matrices
+    "N806", # allow uppercase variable names (N806)
+    "N803" # allow uppercase function arguments (N806)
+]

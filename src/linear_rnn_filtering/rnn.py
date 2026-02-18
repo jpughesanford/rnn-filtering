@@ -5,8 +5,8 @@ predicted next-token probability distribution at every time step.
 
 """
 
-from abc import abstractmethod, ABCMeta
-from collections.abc import Iterable, Callable
+from abc import ABCMeta, abstractmethod
+from collections.abc import Callable, Iterable
 from functools import partial
 
 import jax
@@ -14,11 +14,10 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from jax.nn import logsumexp
-
 from jax.typing import ArrayLike
 
 from .hmm import DiscreteHMM
-from .types import LossType, ConstraintType
+from .types import ConstraintType, LossType
 from .utils import DTYPE, params_to_stable_matrix, stable_matrix_to_params
 
 __all__ = ["AbstractRNN", "ExactRNN", "ModelA", "ModelB"]
@@ -54,9 +53,8 @@ def _validate_scheme(schema: list[tuple[str, tuple[int], str]]) -> bool:
             return False
         if not isinstance(constraint, ConstraintType):
             return False
-        if constraint is ConstraintType.STABLE:
-            if len(shape) != 2 or shape[0] != shape[1]:
-                return False
+        if constraint is ConstraintType.STABLE and (len(shape) != 2 or shape[0] != shape[1]):
+            return False
     return True
 
 
@@ -165,9 +163,9 @@ class AbstractRNN(metaclass=ABCMeta):
         # Initialize
         self.raw_weights: dict[str, jax.Array] = {
             raw_name: jax.random.normal(key, raw_shape, dtype=DTYPE) * ic_scale
-            for (raw_name, raw_shape), key in zip(raw_schema, keys)
+            for (raw_name, raw_shape), key in zip(raw_schema, keys, strict=True)
         }
-        self.isFrozen: dict[str, bool] = {name: False for name in self.raw_weights}
+        self.isFrozen: dict[str, bool] = dict.fromkeys(self.raw_weights, False)
 
     @classmethod
     @abstractmethod
@@ -672,14 +670,20 @@ class AbstractRNN(metaclass=ABCMeta):
             if needs_posterior:
                 _, targets = hmm.compute_posterior(emissions)
 
-                def update(raw_weights, state):
+                def update(
+                    raw_weights, state,
+                    emissions_jax=emissions_jax, targets=targets, optimizer=optimizer,
+                ):
                     val, grads = jax.value_and_grad(loss_fn)(raw_weights, emissions_jax, targets, x0_vec)
                     updates, state = optimizer.update(grads, state, raw_weights)
                     raw_weights = optax.apply_updates(raw_weights, updates)
                     return raw_weights, state, val
             else:
 
-                def update(raw_weights, state):
+                def update(
+                    raw_weights, state,
+                    emissions_jax=emissions_jax, optimizer=optimizer,
+                ):
                     val, grads = jax.value_and_grad(loss_fn)(raw_weights, emissions_jax, x0_vec)
                     updates, state = optimizer.update(grads, state, raw_weights)
                     raw_weights = optax.apply_updates(raw_weights, updates)
@@ -824,7 +828,7 @@ class ModelA(AbstractRNN):
         y_t = C @ jax.nn.softmax(x_t)
         return x_t, y_t
 
-    def initialize_Astar(self, hmm: DiscreteHMM) -> None:
+    def initialize_astar(self, hmm: DiscreteHMM) -> None:
         """Initialize raw weights from an HMM via log-probability linearization.
 
         Computes the Jacobian of the log-transfer map at the stationary

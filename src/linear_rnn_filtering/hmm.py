@@ -2,6 +2,7 @@
 Also includes HMMFactory methods for constructing standard HMM instances"""
 
 from functools import partial
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -19,8 +20,10 @@ class DiscreteHMM:
     Attributes:
         transfer_matrix (jax.Array): Transition matrix of shape (latent_dim, latent_dim).
         emission_matrix (jax.Array): Emission matrix of shape (emission_dim, latent_dim).
-        latent_stationary_density (jax.Array): Stationary distribution of the latent Markov chain of shape (latent_dim,).
-        emission_stationary_density (jax.Array): Marginal emission distribution under stationarity of shape (emission_dim,).
+        latent_stationary_density (jax.Array): Stationary distribution of the latent Markov chain,
+            shape (latent_dim,).
+        emission_stationary_density (jax.Array): Marginal emission distribution under stationarity,
+            shape (emission_dim,).
     """
 
     def __init__(self, latent_dim: int, emission_dim: int) -> None:
@@ -61,8 +64,10 @@ class DiscreteHMM:
             key (jax.Array, optional): JAX PRNG key. If None, a new key is randomly generated.
 
         Returns:
-            latent (jax.Array): Hidden state indices, shape (batch_size, time_steps). Values range from 0 to latent_dim-1.
-            emission (jax.Array): Observed emission indices, shape (batch_size, time_steps). Values range from 0 to emission_dim-1.
+            latent (jax.Array): Hidden state indices, shape (batch_size, time_steps).
+                Values range from 0 to latent_dim-1.
+            emission (jax.Array): Observed emission indices, shape (batch_size, time_steps).
+                Values range from 0 to emission_dim-1.
         """
         if key is None:
             key = jax.random.PRNGKey(np.random.randint(0, 2**31))
@@ -84,7 +89,8 @@ class DiscreteHMM:
         Returns:
             latent_posterior (jax.Array): Posterior over hidden states, shape (batch_size, time_steps, latent_dim).
                 Represents P(x_t | y_{0:t}) for each time step.
-            next_emission_posterior (jax.Array): Posterior over next emissions, shape (batch_size, time_steps, emission_dim).
+            next_emission_posterior (jax.Array): Posterior over next emissions,
+                shape (batch_size, time_steps, emission_dim).
                 Represents P(y_{t+1} | y_{0:t}) for each time step.
         """
 
@@ -205,7 +211,8 @@ def _forward_filter_scan(
 
     Returns:
         latent_posterior (jax.Array): Filtered latent-state posteriors, shape (batch, timesteps, n).
-        next_emission_posterior (jax.Array): One-step-ahead emission predictive distributions, shape (batch, timesteps, m).
+        next_emission_posterior (jax.Array): One-step-ahead emission predictive distributions,
+            shape (batch, timesteps, m).
     """
     log_transfer_matrix = jnp.log(transfer_matrix)
     log_emission_matrix = jnp.log(emission_matrix)

@@ -4,8 +4,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from linear_rnn_filtering.rnn import AbstractRNN, ExactRNN, ModelA, ModelB
 from linear_rnn_filtering.hmm import HMMFactory
+from linear_rnn_filtering.rnn import ExactRNN, ModelA, ModelB
 from linear_rnn_filtering.types import LossType
 
 
@@ -86,9 +86,9 @@ class TestPredict:
 
 
 class TestInitializeFromHMM:
-    def test_initialize_Astar(self, casino):
+    def test_initialize_astar(self, casino):
         rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=0)
-        rnn.initialize_Astar(casino)
+        rnn.initialize_astar(casino)
         _, emissions = casino.sample(batch_size=3, time_steps=50)
         Y, _ = rnn.predict(emissions)
         assert Y.shape == (3, 50, casino.emission_dim)
