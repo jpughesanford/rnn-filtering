@@ -5,7 +5,7 @@ investigate the ability of Recurrent Neural Networks (RNNs) with linear latent d
 perform next token prediction on sequences sampled from Hidden Markov Models (HMMs).
 
 At the moment, this code does not reproduce the datasets/figures/analysis done in the manuscript, but that is something
-we plan to implement soon. What this version of the repo does is make publish the JAX-based, fully differentiable, HMM
+we plan to implement soon. What this version of the repo does is make public the JAX-based, fully differentiable, HMM
 and RNN classes that we developed for this project. 
 
 ## Installation
