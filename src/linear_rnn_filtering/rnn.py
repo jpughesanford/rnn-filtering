@@ -51,8 +51,8 @@ def _validate_scheme(schema: list[tuple[str, tuple[int,...], str]]) -> bool:
             return False
         if any(d <= 0 for d in shape):
             return False
-        if not isinstance(constraint, ConstraintType):
-            return False
+        if constraint is not None:
+            constraint = ConstraintType(constraint)
         if constraint is ConstraintType.STABLE and (len(shape) != 2 or shape[0] != shape[1]):
             return False
     return True
@@ -146,7 +146,9 @@ class AbstractRNN(metaclass=ABCMeta):
         self.latent_dim: int = latent_dim
         self.emission_dim: int = emission_dim
 
-        self._schema: list[tuple[str, tuple[int], ConstraintType]] = self.schema(latent_dim, emission_dim)
+        self._schema: list[tuple[str, tuple[int,...], ConstraintType]] = [
+            (name, shape, ConstraintType(constraint)) for (name, shape, constraint) in self.schema(latent_dim, emission_dim)
+        ]
         if not _validate_scheme(self._schema):
             raise ValueError("Scheme is invalid.")
 
@@ -401,13 +403,13 @@ class AbstractRNN(metaclass=ABCMeta):
         output, latent = self._batched_forward(self.raw_weights, emissions, x0)
         return jnp.array(output), jnp.array(latent)
 
-    def loss(self, emissions: ArrayLike, loss: LossType = LossType.EMISSIONS, x0: ArrayLike | None = None) -> jax.Array:
+    def loss(self, emissions: ArrayLike, loss: LossType | str = LossType.EMISSIONS, x0: ArrayLike | None = None) -> jax.Array:
         """Compute a scalar loss on a batch of emissions.
 
         Args:
             emissions (ArrayLike): Observed emission indices of shape (B, T).
-            loss (LossType, optional): Loss type. One of ``LossType.EMISSIONS``,
-                ``LossType.KL``, or ``LossType.HILBERT``. For ``KL`` and ``HILBERT``,
+            loss (LossType | str, optional): Loss type. One of ``LossType.EMISSIONS / "emissions"``,
+                ``LossType.KL / "kl"``, or ``LossType.HILBERT / "hilbert"``. For ``KL`` and ``HILBERT``,
                 ``emissions`` must be accompanied by ``targets`` — use :meth:`eval_loss`
                 for the convenience wrapper. Defaults to ``LossType.EMISSIONS``.
             x0 (ArrayLike, optional): Initial hidden state of shape (latent_dim,). Defaults to zeros.
@@ -524,7 +526,7 @@ class AbstractRNN(metaclass=ABCMeta):
         self,
         hmm: DiscreteHMM,
         *,
-        loss: LossType = LossType.EMISSIONS,
+        loss: LossType | str = LossType.EMISSIONS,
         batch_size: int = 100,
         time_steps: int = 1000,
         num_epochs: int = 1,
@@ -575,7 +577,7 @@ class AbstractRNN(metaclass=ABCMeta):
         self,
         hmm: DiscreteHMM,
         *,
-        loss: LossType = LossType.EMISSIONS,
+        loss: LossType | str = LossType.EMISSIONS,
         batch_size: int = 100,
         time_steps: int = 1000,
         x0: ArrayLike | None = None,

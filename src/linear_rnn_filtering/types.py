@@ -5,7 +5,18 @@ from enum import Enum
 __all__ = ["LossType", "ConstraintType"]
 
 
-class LossType(str, Enum):
+class CheckedType(str, Enum):
+    """A Type class that raises a value error if initialized with an unrecognized value."""
+
+    @classmethod
+    def _missing_(cls, value):
+        valid_values = [member.value for member in cls]
+        raise ValueError(
+            f"'{value}' is not a valid {cls.__name__}. "
+            f"Accepted values are: {valid_values}"
+        )
+
+class LossType(CheckedType):
     """Training / evaluation objective."""
 
     EMISSIONS = "emissions"
@@ -16,7 +27,7 @@ class LossType(str, Enum):
     """Hilbert projective distance to posterior."""
 
 
-class ConstraintType(str, Enum):
+class ConstraintType(CheckedType):
     """Constraints on network weights."""
 
     UNCONSTRAINED = "unconstrained"
