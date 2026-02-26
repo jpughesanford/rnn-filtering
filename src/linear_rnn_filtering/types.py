@@ -1,8 +1,11 @@
 """Enum types used throughout the library for loss selection and weight constraints."""
 
 from enum import Enum
+from typing import Any
 
-__all__ = ["LossType", "ConstraintType"]
+__all__ = ["LossType", "ConstraintType", "Schema"]
+
+Schema = dict[str, dict[str, Any]]
 
 
 class CheckedType(str, Enum):
@@ -11,10 +14,8 @@ class CheckedType(str, Enum):
     @classmethod
     def _missing_(cls, value):
         valid_values = [member.value for member in cls]
-        raise ValueError(
-            f"'{value}' is not a valid {cls.__name__}. "
-            f"Accepted values are: {valid_values}"
-        )
+        raise ValueError(f"'{value}' is not a valid {cls.__name__}. Accepted values are: {valid_values}")
+
 
 class LossType(CheckedType):
     """Training / evaluation objective."""
