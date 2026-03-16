@@ -12,7 +12,7 @@ __all__ = ["DiscreteHMM", "HMMFactory"]
 
 
 class DiscreteHMM:
-    """A discrete-state, discrete-emission Hidden Markov Model.
+    """A discrete time, discrete-state Hidden Markov Model, with node-determined emissions.
 
     Matrices use column-stochastic convention: columns sum to one.
     Internally all matrices and distributions are stored as JAX arrays.
@@ -113,14 +113,19 @@ class DiscreteHMM:
             transfer_matrix (ArrayLike): Column-stochastic transition matrix of shape (latent_dim, latent_dim).
 
         Raises:
-            AssertionError: If the matrix has the wrong shape, is not column-stochastic,
+            ValueError: If the matrix has the wrong shape, is not column-stochastic,
                 or the stationary eigenvector is not real-valued.
         """
         transfer_matrix = np.asarray(transfer_matrix)
-        assert transfer_matrix.shape == (self.latent_dim, self.latent_dim)
-        assert np.allclose(transfer_matrix.sum(axis=0), 1, 1e-16)
+        if transfer_matrix.shape != (self.latent_dim, self.latent_dim):
+            raise ValueError(f"Transfer matrix has wrong shape. Expected {(self.latent_dim, self.latent_dim)}, got {transfer_matrix.shape}.")
+        colsum = transfer_matrix.sum(axis=0)
+        if not np.allclose(colsum, 1, 1e-16):
+            raise ValueError(f"Transfer matrix is not stochastic. Worst column sum deviation from one: {colsum.max()}")
         eigenvalues, eigenvectors = np.linalg.eig(transfer_matrix)
         idx = np.argmin(np.abs(eigenvalues - 1))
+        if np.linalg.norm(np.imag(eigenvectors[:, idx])) > 1e-8:
+            raise ValueError(f"Leading eigenvector appears to be imaginary")
         assert np.linalg.norm(np.imag(eigenvectors[:, idx])) < 1e-8
         stationary = np.real(eigenvectors[:, idx])
         stationary = stationary / stationary.sum()
@@ -137,7 +142,7 @@ class DiscreteHMM:
             emission_matrix (ArrayLike): Column-stochastic emission matrix of shape (emission_dim, latent_dim).
 
         Raises:
-            AssertionError: If the matrix has the wrong shape or is not column-stochastic.
+            ValueError: If the matrix has the wrong shape or is not column-stochastic.
         """
         emission_matrix = np.asarray(emission_matrix)
         assert emission_matrix.shape == (self.emission_dim, self.latent_dim)
