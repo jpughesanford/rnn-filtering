@@ -83,7 +83,7 @@ class Parameter(eqx.Module):
 
     def randomize_dof(self, prng_key: jax.Array, ic_scale: float = 0.01) -> "Parameter":
         value = jax.random.normal(prng_key, self.shape) * ic_scale
-        return eqx.tree_at(lambda s: s.dof, self, value)
+        return self.set_value(value)
 
     def get_value(self) -> jax.Array:
         return self.dof
