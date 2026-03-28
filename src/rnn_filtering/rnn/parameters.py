@@ -117,6 +117,9 @@ class StochasticParameter(Parameter):
         value = jnp.log(value)
         return eqx.tree_at(lambda s: s.dof, self, value)
 
+    def randomize_dof(self, prng_key: jax.Array, ic_scale: float = 0.01) -> "Parameter":
+        value = jax.random.uniform(prng_key, self.shape) * ic_scale
+        return self.set_value(value)
 
 # ---------------------------------------------------------------------------
 # Nonnegative
