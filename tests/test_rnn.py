@@ -196,9 +196,7 @@ class TestTraining:
 
     def test_train_returns_correct_shape(self, casino):
         rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=0)
-        loss = train_on_hmm(
-            rnn, casino, num_epochs=2, optimization_steps=10, print_every=0
-        )
+        loss = train_on_hmm(rnn, casino, num_epochs=2, optimization_steps=10, print_every=0)
         assert loss.shape == (10, 2)
 
     def test_train_directly_with_precomputed_data(self, casino):

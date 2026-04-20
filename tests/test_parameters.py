@@ -1,17 +1,19 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from rnn_filtering.hmm import NodeEmittingHMM, HMMFactory
+from rnn_filtering.hmm import HMMFactory, NodeEmittingHMM
 from rnn_filtering.rnn import AbstractRNN, Parameter, register_parameter_type
-from rnn_filtering.rnn.parameters import NonnegativeParameter, StableParameter, StochasticParameter
+from rnn_filtering.rnn.parameters import StableParameter
 from rnn_filtering.training import train_on_hmm
-import equinox as eqx
+
 
 @pytest.fixture
 def casino():
     return HMMFactory.dishonest_casino()
+
 
 class TestConstraints:
     def test_stochastic_constraint_enforced_after_training(self, casino):
@@ -140,7 +142,7 @@ class TestRegisterParameterType:
             def schema(latent_dim, emission_dim):
                 return {
                     "A": {"shape": (latent_dim, latent_dim), "constraint": "zero_column_sum"},
-                    "B": {"shape": (latent_dim, emission_dim), "constraint": "zero_column_sum"}
+                    "B": {"shape": (latent_dim, emission_dim), "constraint": "zero_column_sum"},
                 }
 
             @staticmethod
@@ -150,10 +152,10 @@ class TestRegisterParameterType:
                 return x_t, y_t
 
         E = np.asarray([[3, 1], [1, 3]]) / 4
-        T = np.asarray([[1 - .1, .1], [.1, 1 - .1]])
+        T = np.asarray([[1 - 0.1, 0.1], [0.1, 1 - 0.1]])
         hmm = NodeEmittingHMM(transfer_operator=T, emission_operator=E, latent_dim=2, emission_dim=2)
         rnn = RNN(hmm.latent_dim, hmm.emission_dim, seed=0)
-        params = rnn.get_parameter_values(["A","B"])
+        params = rnn.get_parameter_values(["A", "B"])
         assert np.all(params["A"].sum(axis=0) == 0)
         assert np.all(params["B"].sum(axis=0) == 0)
 

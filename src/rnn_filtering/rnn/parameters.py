@@ -121,6 +121,7 @@ class StochasticParameter(Parameter):
         value = jax.random.uniform(prng_key, self.shape) * ic_scale
         return self.set_value(value)
 
+
 # ---------------------------------------------------------------------------
 # Nonnegative
 # ---------------------------------------------------------------------------
