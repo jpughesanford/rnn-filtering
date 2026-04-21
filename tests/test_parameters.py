@@ -19,11 +19,11 @@ class TestConstraints:
     def test_stochastic_constraint_enforced_after_training(self, casino):
         class StochasticModel(AbstractRNN):
             @staticmethod
-            def schema(latent_dim, emission_dim):
+            def schema(input_dim, latent_dim, output_dim):
                 return {
                     "A": {"shape": (latent_dim, latent_dim), "constraint": "stochastic"},
-                    "B": {"shape": (latent_dim, emission_dim)},
-                    "C": {"shape": (emission_dim, latent_dim)},
+                    "B": {"shape": (latent_dim, input_dim)},
+                    "C": {"shape": (output_dim, latent_dim)},
                 }
 
             @staticmethod
@@ -32,7 +32,7 @@ class TestConstraints:
                 y_t = jax.nn.softmax(C @ x_t)
                 return x_t, y_t
 
-        rnn = StochasticModel(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = StochasticModel(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         train_on_hmm(rnn, casino, batch_size=10, time_steps=50, optimization_steps=50, print_every=0)
         A = np.array(rnn.get_parameter_values({"A"})["A"])
         assert np.allclose(A.sum(axis=0), 1.0, atol=1e-6)
@@ -41,11 +41,11 @@ class TestConstraints:
     def test_stable_constraint_enforced_after_training(self, casino):
         class StableModel(AbstractRNN):
             @staticmethod
-            def schema(latent_dim, emission_dim):
+            def schema(input_dim, latent_dim, output_dim):
                 return {
                     "A": {"shape": (latent_dim, latent_dim), "constraint": "stable"},
-                    "B": {"shape": (latent_dim, emission_dim)},
-                    "C": {"shape": (emission_dim, latent_dim)},
+                    "B": {"shape": (latent_dim, input_dim)},
+                    "C": {"shape": (output_dim, latent_dim)},
                 }
 
             @staticmethod
@@ -54,7 +54,7 @@ class TestConstraints:
                 y_t = jax.nn.softmax(C @ x_t)
                 return x_t, y_t
 
-        rnn = StableModel(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = StableModel(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         train_on_hmm(rnn, casino, batch_size=10, time_steps=50, optimization_steps=50, print_every=0)
         A = np.array(rnn.get_parameter_values({"A"})["A"])
         assert np.all(np.abs(np.linalg.eigvals(A)) <= 1 + 1e-5)
@@ -62,11 +62,11 @@ class TestConstraints:
     def test_nonnegative_constraint_enforced_after_training(self, casino):
         class NonnegativeModel(AbstractRNN):
             @staticmethod
-            def schema(latent_dim, emission_dim):
+            def schema(input_dim, latent_dim, output_dim):
                 return {
                     "A": {"shape": (latent_dim, latent_dim), "constraint": "nonnegative"},
-                    "B": {"shape": (latent_dim, emission_dim)},
-                    "C": {"shape": (emission_dim, latent_dim)},
+                    "B": {"shape": (latent_dim, input_dim)},
+                    "C": {"shape": (output_dim, latent_dim)},
                 }
 
             @staticmethod
@@ -75,7 +75,7 @@ class TestConstraints:
                 y_t = jax.nn.softmax(C @ x_t)
                 return x_t, y_t
 
-        rnn = NonnegativeModel(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = NonnegativeModel(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         train_on_hmm(rnn, casino, batch_size=10, time_steps=50, optimization_steps=50, print_every=0)
         A = np.array(rnn.get_parameter_values({"A"})["A"])
         assert np.all(A >= 0)
@@ -93,11 +93,11 @@ class TestRegisterParameterType:
 
         class AbsModel(AbstractRNN):
             @staticmethod
-            def schema(latent_dim, emission_dim):
+            def schema(input_dim, latent_dim, output_dim):
                 return {
                     "A": {"shape": (latent_dim, latent_dim), "constraint": "abs"},
-                    "B": {"shape": (latent_dim, emission_dim)},
-                    "C": {"shape": (emission_dim, latent_dim)},
+                    "B": {"shape": (latent_dim, input_dim)},
+                    "C": {"shape": (output_dim, latent_dim)},
                 }
 
             @staticmethod
@@ -106,7 +106,7 @@ class TestRegisterParameterType:
                 y_t = jax.nn.softmax(C @ x_t)
                 return x_t, y_t
 
-        rnn = AbsModel(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = AbsModel(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         assert isinstance(rnn._parameters["A"], AbsParameter)
         _, emissions = casino.sample(batch_size=2, time_steps=10)
         inputs = jax.nn.one_hot(jnp.asarray(emissions, jnp.int32), casino.emission_dim)
@@ -139,10 +139,10 @@ class TestRegisterParameterType:
 
         class RNN(AbstractRNN):
             @staticmethod
-            def schema(latent_dim, emission_dim):
+            def schema(input_dim, latent_dim, output_dim):
                 return {
                     "A": {"shape": (latent_dim, latent_dim), "constraint": "zero_column_sum"},
-                    "B": {"shape": (latent_dim, emission_dim), "constraint": "zero_column_sum"},
+                    "B": {"shape": (latent_dim, input_dim), "constraint": "zero_column_sum"},
                 }
 
             @staticmethod
@@ -154,7 +154,7 @@ class TestRegisterParameterType:
         E = np.asarray([[3, 1], [1, 3]]) / 4
         T = np.asarray([[1 - 0.1, 0.1], [0.1, 1 - 0.1]])
         hmm = NodeEmittingHMM(transfer_operator=T, emission_operator=E, latent_dim=2, emission_dim=2)
-        rnn = RNN(hmm.latent_dim, hmm.emission_dim, seed=0)
+        rnn = RNN(hmm.emission_dim, hmm.latent_dim, hmm.emission_dim, seed=0)
         params = rnn.get_parameter_values(["A", "B"])
         assert np.all(params["A"].sum(axis=0) == 0)
         assert np.all(params["B"].sum(axis=0) == 0)

@@ -58,7 +58,7 @@ latent_posterior, next_token_posterior = hmm.compute_posterior(emissions)
 
 # Create a Model A RNN and train it to match the posterior.
 # train_on_hmm handles sampling, one-hot embedding, and posterior computation.
-rnn = ModelA(hmm.latent_dim, hmm.emission_dim, seed=0)
+rnn = ModelA(hmm.emission_dim, hmm.latent_dim, hmm.emission_dim, seed=0)
 loss = train_on_hmm(rnn, hmm, output_loss="kl", batch_size=100, time_steps=500, optimization_steps=1000)
 
 # Embed emissions as one-hot vectors and run the RNN.
@@ -67,7 +67,7 @@ output_timeseries, latent_timeseries = rnn.respond(inputs)
 
 # Implement an exact RNN. This is an RNN with nonlinear latent dynamics and a nonlinear readout function.
 # See manuscript for more details
-exact = ExactRNN(hmm.latent_dim, hmm.emission_dim)
+exact = ExactRNN(hmm.emission_dim, hmm.latent_dim, hmm.emission_dim)
 
 # For the right choice of weights, this RNN can perform forward filtering exactly. These weights can be
 # analytically solved for, and we wrote a method that sets them analytically, directly from the hmm instance:
@@ -274,17 +274,17 @@ import jax.numpy as jnp
 
 class MyNonlinearModel(AbstractRNN):
     @staticmethod
-    def schema(latent_dim, emission_dim):
+    def schema(input_dim, latent_dim, output_dim):
         return {
             "A": {
                 "shape": (latent_dim, latent_dim),
                 "constraint": "stable"
             },
             "B": {
-                "shape": (latent_dim, emission_dim),
+                "shape": (latent_dim, input_dim),
             },
             "C": {
-                "shape": (emission_dim, latent_dim),
+                "shape": (output_dim, latent_dim),
                 "constraint": "stochastic"
             }
         }
@@ -296,7 +296,7 @@ class MyNonlinearModel(AbstractRNN):
         return x_t, y_t
 
 # for some hmm...
-rnn = MyNonlinearModel(hmm.latent_dim, hmm.emission_dim, seed=0)
+rnn = MyNonlinearModel(hmm.latent_dim, hmm.emission_dim, hmm.emission_dim, seed=0)
 loss = train_on_hmm(rnn, hmm, output_loss="kl", batch_size=100, time_steps=500, optimization_steps=1000)
 ```
 
@@ -343,7 +343,7 @@ from rnn_filtering.rnn import AbstractRNN
 
 class MyModel(AbstractRNN):
     @staticmethod
-    def schema(latent_dim, emission_dim):
+    def schema(input_dim, latent_dim, output_dim):
         return {
             "A": {"shape": (latent_dim, latent_dim), "constraint": "stable"},
             "alpha": {"shape": (latent_dim,), "constraint": "bounded"},
@@ -352,7 +352,7 @@ class MyModel(AbstractRNN):
     def integrate(A, alpha, x_prev, input_t):
         ...
 
-my_rnn = MyModel(latent_dim, emission_dim)
+my_rnn = MyModel(input_dim, latent_dim, output_dim)
 ```
 
 ## License

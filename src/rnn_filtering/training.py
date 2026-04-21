@@ -91,7 +91,7 @@ def train_on_hmm(
         # Sample and embed.
         _, emissions = hmm.sample(batch_size, time_steps)
         emissions = jnp.asarray(emissions, dtype=jnp.int32)
-        inputs = jax.nn.one_hot(emissions, rnn.emission_dim)  # (B, T, K)
+        inputs = jax.nn.one_hot(emissions, rnn.input_dim)  # (B, T, K)
 
         # Build one hot output.
         if train_on_emissions:

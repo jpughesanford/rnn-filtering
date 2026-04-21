@@ -135,7 +135,7 @@ class AbstractRNN(metaclass=ABCMeta):
     soft distributions, or any other fixed-length vector.
 
     Subclasses must implement:
-        - ``schema(latent_dim, emission_dim)`` (staticmethod) returning parameter specifications.
+        - ``schema(input_dim, latent_dim, output_dim)`` (staticmethod) returning parameter specifications.
         - ``integrate(..., x_prev, input_t)`` (staticmethod) defining the recurrence.
 
     Use :meth:`get_parameter_names`, :meth:`get_parameter_values`, and
@@ -143,15 +143,17 @@ class AbstractRNN(metaclass=ABCMeta):
 
     Attributes:
         latent_dim (int): Dimensionality of the latent state.
-        emission_dim (int): Dimensionality of each input / output vector.
+        input_dim (int): Dimensionality of each input vector.
+        output_dim (int): Dimensionality of each output vector.
         seed (int): Seed used to initialise all randomly-initialised weights.
     """
 
-    def __init__(self, latent_dim: int, emission_dim: int, seed: int = 0, ic_scale: float = 0.01):
+    def __init__(self, input_dim: int, latent_dim: int, output_dim: int, seed: int = 0, ic_scale: float = 0.01):
+        self.input_dim: int = input_dim
         self.latent_dim: int = latent_dim
-        self.emission_dim: int = emission_dim
+        self.output_dim: int = output_dim
 
-        json_schema = self.schema(latent_dim, emission_dim)
+        json_schema = self.schema(input_dim, latent_dim, output_dim)
         prng_key = jax.random.PRNGKey(seed)
         self.seed: int = seed
 
@@ -159,7 +161,7 @@ class AbstractRNN(metaclass=ABCMeta):
 
     @staticmethod
     @abstractmethod
-    def schema(latent_dim: int, emission_dim: int) -> Schema:
+    def schema(input_dim: int, latent_dim: int, output_dim: int) -> Schema:
         """Return the parameter schema for this architecture. A valid schema for RNN architecture has the format:
             schema = {
                 "param_name": {
@@ -173,26 +175,27 @@ class AbstractRNN(metaclass=ABCMeta):
 
         All fields (shape, constraint, initial_value) are optional.
 
-        Example: if I want A to be a stable (latent x latent) matrix, and B an (emission x latent) linear readout,
+        Example: if I want A to be a stable (latent x latent) matrix, and B an (output x latent) linear readout,
         then I will use:
 
             @staticmethod
-            def schema(latent_dim, emission_dim):
+            def schema(input_dim, latent_dim, output_dim):
                 return {
                     "A": {
                         "shape": (latent_dim, latent_dim),
                         "constraint": "stable"
                     },
                     "B": {
-                        "shape": (emission_dim, latent_dim),
+                        "shape": (output_dim, latent_dim),
                     },
                 }
 
         In the above example, both matrices will be initialized randomly, since I did not specify their initial value.
 
         Args:
+            input_dim (int): Input vector dimensionality.
             latent_dim (int): Latent state dimensionality.
-            emission_dim (int): Emission dimensionality.
+            output_dim (int): Output vector dimensionality.
 
         Returns:
             Schema : parameter schema of the network
@@ -211,12 +214,12 @@ class AbstractRNN(metaclass=ABCMeta):
 
         Args:
             x_prev (jax.Array): Previous hidden state of shape (latent_dim,).
-            input_t (jax.Array): Current input vector of shape (emission_dim,).
+            input_t (jax.Array): Current input vector of shape (input_dim,).
             **kwargs: Constrained weight arrays as defined by :meth:`schema`.
 
         Returns:
             x_t (jax.Array): Updated hidden state of shape (latent_dim,).
-            y_t (jax.Array): Predicted output distribution of shape (emission_dim,).
+            y_t (jax.Array): Predicted output distribution of shape (output_dim,).
         """
         raise NotImplementedError
 
@@ -282,14 +285,14 @@ class AbstractRNN(metaclass=ABCMeta):
         """Run the RNN on a batch of input sequences.
 
         Args:
-            inputs (ArrayLike): Input vectors of shape (B, T, emission_dim).
+            inputs (ArrayLike): Input vectors of shape (B, T, input_dim).
                 May be one-hot encodings, soft distributions, or any other
                 fixed-length representation.
             x0 (ArrayLike, optional): Initial hidden state of shape (latent_dim,).
                 Defaults to zeros.
 
         Returns:
-            Y (jax.Array): Output states of shape (B, T, emission_dim).
+            Y (jax.Array): Output states of shape (B, T, output_dim).
             X (jax.Array): Hidden states of shape (B, T, latent_dim).
         """
         inputs = jnp.asarray(inputs)
@@ -312,9 +315,9 @@ class AbstractRNN(metaclass=ABCMeta):
         callables must therefore support that keyword argument.
 
         Args:
-            inputs (ArrayLike): Input vectors of shape (B, T, emission_dim).
+            inputs (ArrayLike): Input vectors of shape (B, T, input_dim).
             desired_output (ArrayLike, optional): Target output distributions of
-                shape (B, T, emission_dim). Required when ``output_loss`` is set.
+                shape (B, T, output_dim). Required when ``output_loss`` is set.
             desired_latent (ArrayLike, optional): Target latent states. Required
                 when ``latent_loss`` is set.
             output_loss (str | Callable, optional): Output loss function.
@@ -367,9 +370,9 @@ class AbstractRNN(metaclass=ABCMeta):
         a batteries-included wrapper when training on HMM data.
 
         Args:
-            inputs (ArrayLike): Input vectors of shape (B, T, emission_dim).
+            inputs (ArrayLike): Input vectors of shape (B, T, input_dim).
             desired_output (ArrayLike, optional): Target output distributions of
-                shape (B, T, emission_dim). Required when ``output_loss`` is set.
+                shape (B, T, output_dim). Required when ``output_loss`` is set.
             desired_latent (ArrayLike, optional): Target latent states. Required
                 when ``latent_loss`` is set.
             output_loss (str | Callable, optional): Loss applied to the RNN
@@ -454,11 +457,11 @@ class AbstractRNN(metaclass=ABCMeta):
 
         Args:
             params (dict[str, Parameter]): Current RNN instance parameters.
-            inputs (jax.Array): Input vectors of shape (B, T, emission_dim).
+            inputs (jax.Array): Input vectors of shape (B, T, input_dim).
             x0 (jax.Array): Initial hidden state of shape (latent_dim,).
 
         Returns:
-            Y (jax.Array): Output states of shape (B, T, emission_dim).
+            Y (jax.Array): Output states of shape (B, T, output_dim).
             X (jax.Array): Hidden states of shape (B, T, latent_dim).
         """
         w = {name: parameter.get_value() for name, parameter in params.items()}
@@ -508,11 +511,13 @@ class ExactRNN(AbstractRNN):
     """
 
     @staticmethod
-    def schema(latent_dim: int, emission_dim: int) -> Schema:
+    def schema(input_dim: int, latent_dim: int, output_dim: int) -> Schema:
+        if input_dim != output_dim:
+            raise ValueError(f"ExactRNN requires input_dim == output_dim, got {input_dim} != {output_dim}.")
         return {
             "A": {"shape": (latent_dim, latent_dim), "constraint": ConstraintType.STOCHASTIC},
-            "B": {"shape": (latent_dim, emission_dim), "constraint": ConstraintType.UNCONSTRAINED},
-            "C": {"shape": (emission_dim, latent_dim), "constraint": ConstraintType.STOCHASTIC},
+            "B": {"shape": (latent_dim, input_dim), "constraint": ConstraintType.UNCONSTRAINED},
+            "C": {"shape": (output_dim, latent_dim), "constraint": ConstraintType.STOCHASTIC},
         }
 
     @staticmethod
@@ -526,14 +531,14 @@ class ExactRNN(AbstractRNN):
 
         Args:
             A (jax.Array): Column-stochastic transfer matrix of shape (latent_dim, latent_dim).
-            B (jax.Array): Input projection matrix of shape (latent_dim, emission_dim).
-            C (jax.Array): Column-stochastic readout matrix of shape (emission_dim, latent_dim).
+            B (jax.Array): Input projection matrix of shape (latent_dim, input_dim).
+            C (jax.Array): Column-stochastic readout matrix of shape (output_dim, latent_dim).
             x_prev (jax.Array): Previous log-posterior of shape (latent_dim,).
-            input_t (jax.Array): Current input vector of shape (emission_dim,).
+            input_t (jax.Array): Current input vector of shape (input_dim,).
 
         Returns:
             x_t (jax.Array): Updated log-posterior of shape (latent_dim,).
-            y_t (jax.Array): Predicted output distribution of shape (emission_dim,).
+            y_t (jax.Array): Predicted output distribution of shape (output_dim,).
         """
         x_t = jnp.log(A @ jnp.exp(x_prev)) + B @ input_t
         x_t = x_t - logsumexp(x_t)
@@ -576,11 +581,13 @@ class ModelA(AbstractRNN):
     """
 
     @staticmethod
-    def schema(latent_dim: int, emission_dim: int) -> Schema:
+    def schema(input_dim: int, latent_dim: int, output_dim: int) -> Schema:
+        if input_dim != output_dim:
+            raise ValueError(f"ModelA requires input_dim == output_dim, got {input_dim} != {output_dim}.")
         return {
             "A": {"shape": (latent_dim, latent_dim), "constraint": ConstraintType.STABLE},
-            "B": {"shape": (latent_dim, emission_dim), "constraint": ConstraintType.UNCONSTRAINED},
-            "C": {"shape": (emission_dim, latent_dim), "constraint": ConstraintType.STOCHASTIC},
+            "B": {"shape": (latent_dim, input_dim), "constraint": ConstraintType.UNCONSTRAINED},
+            "C": {"shape": (output_dim, latent_dim), "constraint": ConstraintType.STOCHASTIC},
         }
 
     @staticmethod
@@ -594,14 +601,14 @@ class ModelA(AbstractRNN):
 
         Args:
             A (jax.Array): Stable dynamics matrix of shape (latent_dim, latent_dim).
-            B (jax.Array): Input projection matrix of shape (latent_dim, emission_dim).
-            C (jax.Array): Column-stochastic readout matrix of shape (emission_dim, latent_dim).
+            B (jax.Array): Input projection matrix of shape (latent_dim, input_dim).
+            C (jax.Array): Column-stochastic readout matrix of shape (output_dim, latent_dim).
             x_prev (jax.Array): Previous hidden state of shape (latent_dim,).
-            input_t (jax.Array): Current input vector of shape (emission_dim,).
+            input_t (jax.Array): Current input vector of shape (input_dim,).
 
         Returns:
             x_t (jax.Array): Updated hidden state of shape (latent_dim,).
-            y_t (jax.Array): Predicted output distribution of shape (emission_dim,).
+            y_t (jax.Array): Predicted output distribution of shape (output_dim,).
         """
         x_t = A @ x_prev + B @ input_t
         y_t = C @ jax.nn.softmax(x_t)
@@ -648,12 +655,14 @@ class ModelB(AbstractRNN):
     """
 
     @staticmethod
-    def schema(latent_dim: int, emission_dim: int) -> Schema:
+    def schema(input_dim: int, latent_dim: int, output_dim: int) -> Schema:
+        if input_dim != output_dim:
+            raise ValueError(f"ModelB requires input_dim == output_dim, got {input_dim} != {output_dim}.")
         return {
             "A": {"shape": (latent_dim, latent_dim), "constraint": ConstraintType.STABLE},
-            "B": {"shape": (latent_dim, emission_dim), "constraint": ConstraintType.UNCONSTRAINED},
-            "C": {"shape": (emission_dim, latent_dim), "constraint": ConstraintType.UNCONSTRAINED},
-            "d": {"shape": (emission_dim,), "constraint": ConstraintType.UNCONSTRAINED},
+            "B": {"shape": (latent_dim, input_dim), "constraint": ConstraintType.UNCONSTRAINED},
+            "C": {"shape": (output_dim, latent_dim), "constraint": ConstraintType.UNCONSTRAINED},
+            "d": {"shape": (output_dim,), "constraint": ConstraintType.UNCONSTRAINED},
         }
 
     @staticmethod
@@ -667,15 +676,15 @@ class ModelB(AbstractRNN):
 
         Args:
             A (jax.Array): Stable dynamics matrix of shape (latent_dim, latent_dim).
-            B (jax.Array): Input projection matrix of shape (latent_dim, emission_dim).
-            C (jax.Array): Readout weight matrix of shape (emission_dim, latent_dim).
-            d (jax.Array): Readout bias vector of shape (emission_dim,).
+            B (jax.Array): Input projection matrix of shape (latent_dim, input_dim).
+            C (jax.Array): Readout weight matrix of shape (output_dim, latent_dim).
+            d (jax.Array): Readout bias vector of shape (output_dim,).
             x_prev (jax.Array): Previous hidden state of shape (latent_dim,).
-            input_t (jax.Array): Current input vector of shape (emission_dim,).
+            input_t (jax.Array): Current input vector of shape (input_dim,).
 
         Returns:
             x_t (jax.Array): Updated hidden state of shape (latent_dim,).
-            y_t (jax.Array): Predicted output distribution of shape (emission_dim,).
+            y_t (jax.Array): Predicted output distribution of shape (output_dim,).
         """
         x_t = A @ x_prev + B @ input_t
         y_t = jax.nn.softmax(C @ x_t + d)

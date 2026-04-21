@@ -21,12 +21,12 @@ class TestConstruction:
     def test_schema(self):
         class TestRNN(AbstractRNN):
             @staticmethod
-            def schema(n, m):
+            def schema(input_dim, latent_dim, output_dim):
                 return {
-                    "A": {"shape": (n, n), "constraint": "stable"},
-                    "B": {"shape": (n, m), "constraint": ConstraintType.STOCHASTIC},
+                    "A": {"shape": (latent_dim, latent_dim), "constraint": "stable"},
+                    "B": {"shape": (latent_dim, input_dim), "constraint": ConstraintType.STOCHASTIC},
                     "C": {"constraint": "nonnegative"},
-                    "D": {"shape": (m, n)},
+                    "D": {"shape": (input_dim, latent_dim)},
                 }
 
             @staticmethod
@@ -35,7 +35,7 @@ class TestConstruction:
                 y_t = C @ x_t
                 return x_t, y_t
 
-        test_rnn = TestRNN(10, 10)
+        test_rnn = TestRNN(10, 10, 10)
         assert isinstance(test_rnn._parameters["A"], StableParameter)
         assert isinstance(test_rnn._parameters["B"], StochasticParameter)
         assert isinstance(test_rnn._parameters["C"], NonnegativeParameter)
@@ -44,8 +44,9 @@ class TestConstruction:
 
     def test_exact_initializes_with_correct_architecture(self):
         latent_dim = 2
-        emission_dim = 2
-        rnn = ExactRNN(latent_dim, emission_dim)
+        input_dim = 2
+        output_dim = 2
+        rnn = ExactRNN(input_dim, latent_dim, output_dim)
         assert isinstance(rnn, ExactRNN)
         assert rnn.get_parameter_names() == {"A", "B", "C"}
         assert isinstance(rnn._parameters["A"], StochasticParameter)
@@ -53,13 +54,14 @@ class TestConstruction:
         assert isinstance(rnn._parameters["C"], StochasticParameter)
         values = rnn.get_parameter_values({"A", "B", "C"})
         assert values["A"].shape == (latent_dim, latent_dim)
-        assert values["B"].shape == (latent_dim, emission_dim)
-        assert values["C"].shape == (emission_dim, latent_dim)
+        assert values["B"].shape == (latent_dim, input_dim)
+        assert values["C"].shape == (output_dim, latent_dim)
 
     def test_model_a_initializes_with_correct_architecture(self):
         latent_dim = 5
-        emission_dim = 6
-        rnn = ModelA(latent_dim, emission_dim)
+        input_dim = 6
+        output_dim = 6
+        rnn = ModelA(input_dim, latent_dim, output_dim)
         assert isinstance(rnn, ModelA)
         assert rnn.get_parameter_names() == {"A", "B", "C"}
         assert isinstance(rnn._parameters["A"], StableParameter)
@@ -67,13 +69,14 @@ class TestConstruction:
         assert isinstance(rnn._parameters["C"], StochasticParameter)
         values = rnn.get_parameter_values({"A", "B", "C"})
         assert values["A"].shape == (latent_dim, latent_dim)
-        assert values["B"].shape == (latent_dim, emission_dim)
-        assert values["C"].shape == (emission_dim, latent_dim)
+        assert values["B"].shape == (latent_dim, input_dim)
+        assert values["C"].shape == (output_dim, latent_dim)
 
     def test_model_b_initializes_with_correct_architecture(self):
         latent_dim = 2
-        emission_dim = 2
-        rnn = ModelB(latent_dim, emission_dim)
+        input_dim = 2
+        output_dim = 2
+        rnn = ModelB(input_dim, latent_dim, output_dim)
         assert isinstance(rnn, ModelB)
         assert rnn.get_parameter_names() == {"A", "B", "C", "d"}
         assert isinstance(rnn._parameters["A"], StableParameter)
@@ -82,14 +85,14 @@ class TestConstruction:
         assert isinstance(rnn._parameters["d"], Parameter)
         values = rnn.get_parameter_values({"A", "B", "C", "d"})
         assert values["A"].shape == (latent_dim, latent_dim)
-        assert values["B"].shape == (latent_dim, emission_dim)
-        assert values["C"].shape == (emission_dim, latent_dim)
-        assert values["d"].shape == (emission_dim,)
+        assert values["B"].shape == (latent_dim, input_dim)
+        assert values["C"].shape == (output_dim, latent_dim)
+        assert values["d"].shape == (output_dim,)
 
 
 class TestPredict:
     def test_respond(self, casino):
-        rnn = ExactRNN(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = ExactRNN(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         rnn.initialize_weights(casino)
         _, emissions = casino.sample(batch_size=3, time_steps=20)
         _, posterior = casino.compute_posterior(emissions)
@@ -102,7 +105,7 @@ class TestPredict:
         assert np.allclose(jnp.sum(Y, axis=-1), 1.0, atol=1e-5)
 
     def test_model_b_respond(self, casino):
-        rnn = ModelB(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = ModelB(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         _, emissions = casino.sample(batch_size=3, time_steps=20)
         inputs = jax.nn.one_hot(jnp.asarray(emissions, jnp.int32), casino.emission_dim)
         Y, X = rnn.respond(inputs)
@@ -113,7 +116,7 @@ class TestPredict:
 
 class TestInitializeFromHMM:
     def test_initialize_astar(self, casino):
-        rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = ModelA(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         rnn.initialize_astar(casino)
         _, emissions = casino.sample(batch_size=3, time_steps=50)
         inputs = jax.nn.one_hot(jnp.asarray(emissions, jnp.int32), casino.emission_dim)
@@ -122,7 +125,7 @@ class TestInitializeFromHMM:
         assert np.allclose(jnp.sum(Y, axis=-1), 1.0, atol=1e-5)
 
     def test_initialize_exact(self, casino):
-        rnn = ExactRNN(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = ExactRNN(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         rnn.initialize_weights(casino)
         _, emissions = casino.sample(batch_size=3, time_steps=50)
         inputs = jax.nn.one_hot(jnp.asarray(emissions, jnp.int32), casino.emission_dim)
@@ -133,7 +136,7 @@ class TestInitializeFromHMM:
 
 class TestSampleLoss:
     def test_shapes_and_signs(self, casino):
-        rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = ModelA(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         _, emissions = casino.sample(batch_size=5, time_steps=20)
         emissions = jnp.asarray(emissions, jnp.int32)
         inputs = jax.nn.one_hot(emissions, casino.emission_dim)
@@ -153,7 +156,7 @@ class TestSampleLoss:
 
 class TestTraining:
     def test_train_on_posterior_with_kl_reduces_loss(self, casino):
-        rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=1)
+        rnn = ModelA(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=1)
         loss = train_on_hmm(
             rnn,
             casino,
@@ -167,7 +170,7 @@ class TestTraining:
         assert loss[-1, 0] < 0.9 * loss[0, 0]
 
     def test_train_on_posterior_with_hilbert_reduces_loss(self, casino):
-        rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=1)
+        rnn = ModelA(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=1)
         loss = train_on_hmm(
             rnn,
             casino,
@@ -181,7 +184,7 @@ class TestTraining:
         assert loss[-1, 0] < 0.9 * loss[0, 0]
 
     def test_train_on_emissions_reduces_loss(self, casino):
-        rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=2)
+        rnn = ModelA(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=2)
         loss = train_on_hmm(
             rnn,
             casino,
@@ -195,12 +198,12 @@ class TestTraining:
         assert loss[-1, 0] < loss[0, 0]
 
     def test_train_returns_correct_shape(self, casino):
-        rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=0)
+        rnn = ModelA(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
         loss = train_on_hmm(rnn, casino, num_epochs=2, optimization_steps=10, print_every=0)
         assert loss.shape == (10, 2)
 
     def test_train_directly_with_precomputed_data(self, casino):
-        rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=1)
+        rnn = ModelA(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=1)
         _, emissions = casino.sample(10, 50)
         emissions = jnp.asarray(emissions, jnp.int32)
         inputs = jax.nn.one_hot(emissions, casino.emission_dim)
@@ -218,7 +221,7 @@ class TestTraining:
 
 class TestFreezeUnfreeze:
     def test_freeze_prevents_update(self, casino):
-        rnn = ModelA(casino.latent_dim, casino.emission_dim, seed=3)
+        rnn = ModelA(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=3)
         all_names = rnn.get_parameter_names()
         frozen = {"B", "C"}
         unfrozen = all_names - frozen
