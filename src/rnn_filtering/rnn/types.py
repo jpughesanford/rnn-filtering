@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Any
 
-__all__ = ["LossType", "ConstraintType", "Schema"]
+__all__ = ["ConstraintType", "Schema"]
 
 Schema = dict[str, dict[str, Any]]
 
@@ -15,20 +15,6 @@ class CheckedType(str, Enum):
     def _missing_(cls, value):
         valid_values = [member.value for member in cls]
         raise ValueError(f"'{value}' is not a valid {cls.__name__}. Accepted values are: {valid_values}")
-
-
-class LossType(CheckedType):
-    """Training / evaluation objective."""
-
-    EMISSIONS = "emissions"
-    """Alias for one-hot KL (NLL). Recognised by train_on_hmm; not in LOSS_MAP."""
-    KL = "kl"
-    """KL divergence KL(desired ‖ result)."""
-    HILBERT = "hilbert"
-    """Hilbert projective distance."""
-    ONE_NORM = "one_norm"
-    """L1 norm between distributions."""
-
 
 class ConstraintType(CheckedType):
     """Constraints on network weights."""

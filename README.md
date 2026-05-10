@@ -1,14 +1,14 @@
 # rnn-filtering
 
 
-A JAX library for Hidden Markov Model (HMM) simulation and forward filtering + Recurrent Neural Network (RNN) filtering approximation.
+A JAX library for simulating Hidden Markov Models (HMMs) and single layer Recurrent Neural Networks (RNNs).
 
-This repository contains the framework developed for investigating how RNNs learn to perform Bayesian inference. It provides a bridge between probabilistic graphical models and deep learning architectures, featuring a unique differentiable constraint system for weights.
+This repository contains the framework developed for investigating how RNNs learn to perform Bayesian inference, providing a bridge between stochastic processes and sequence models. It features a unique differentiable constraint system for weights (much like Stan).
 
 ### Key Features
 
 * **Exact Inference:** JAX-based HMMs for sampling and exact Bayesian filtering.
-* **Filtering RNNs:** Architectures (Model A, B, and Exact) designed to approximate HMM forward filtering.
+* **Filtering RNNs:** Architectures (`ExactRNN`, `LinearRNN`) designed to approximate HMM forward filtering.
 * **Differentiable Constraints:** A `Parameter` system that enforces spectral stability or stochasticity while remaining fully JAX-differentiable.
 * **JAX-Native:** Fully differentiable, vectorized, and hardware-accelerated.
 
@@ -21,15 +21,15 @@ pip install git+https://github.com/jpughesanford/rnn-filtering.git
 
 ## Repository structure
 
-The library is designed around two primary, top-level modules plus a top-level training helper method:
+The library is organized around two primary submodules and a training submodule:
 
 - **`rnn_filtering.hmm`** — Discrete HMM simulation and exact Bayesian inference.
   Includes `AbstractHMM`, `NodeEmittingHMM`, `EdgeEmittingHMM`, and `HMMFactory`.
 
 - **`rnn_filtering.rnn`** — General-purpose RNN architectures over vector-valued inputs.
-  Includes `AbstractRNN`, `ExactRNN`, `ModelA`, and `ModelB`. This submodule allows the user to easily design their own constrained RNN architectures as well. The RNN class is largely HMM-agnostic; it operates on arbitrary sequences of fixed-length vectors.
+  Includes `AbstractRNN`, `ExactRNN`, and `LinearRNN`. This submodule allows the user to easily design their own constrained RNN architectures as well. The RNN class is largely HMM-agnostic; it operates on arbitrary sequences of fixed-length vectors.
 
-- **`rnn_filtering.train_on_hmm`** — Convenience wrapper that couples the RNN training loop to an HMM: samples emission sequences, embeds them as one-hot vectors, computes posteriors, and loops over epochs.
+- **`rnn_filtering.train`** — Training utilities. Exposes `train`, `kl_divergence`, `hilbert_distance`, and `one_norm`. The `train` function takes a user-supplied `get_batch` callable, making it HMM-agnostic and composable with any data pipeline.
 
 Additionally, the `rnn` submodule exposes the `Parameter` base class (see below for more about parameters), along with a `register_parameter_type` method for user-defined constraints.
 
@@ -42,8 +42,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from rnn_filtering.hmm import HMMFactory
-from rnn_filtering.rnn import ModelA, ExactRNN
-from rnn_filtering import train_on_hmm
+from rnn_filtering.rnn import LinearRNN, ExactRNN
+from rnn_filtering.train import train, kl_divergence
 
 # Create a two-state "dishonest casino" HMM
 hmm = HMMFactory.dishonest_casino()
@@ -56,10 +56,21 @@ latent, emissions = hmm.sample(batch_size=100, time_steps=500)
 # next_token_posterior: p(y_{t+1} | y_{1:t})
 latent_posterior, next_token_posterior = hmm.compute_posterior(emissions)
 
-# Create a Model A RNN and train it to match the posterior.
-# train_on_hmm handles sampling, one-hot embedding, and posterior computation.
-rnn = ModelA(hmm.emission_dim, hmm.latent_dim, hmm.emission_dim, seed=0)
-loss = train_on_hmm(rnn, hmm, output_loss="kl", batch_size=100, time_steps=500, optimization_steps=1000)
+# Create a LinearRNN and train it to match the posterior.
+# get_batch samples fresh data each epoch; train calls it num_epochs times.
+rnn = LinearRNN(hmm.emission_dim, hmm.latent_dim, hmm.emission_dim, seed=0)
+
+def get_batch():
+    _, emissions = hmm.sample(batch_size=100, time_steps=500)
+    emissions = jnp.asarray(emissions, jnp.int32)
+    inputs = jax.nn.one_hot(emissions, hmm.emission_dim)
+    _, next_token_posterior = hmm.compute_posterior(emissions)
+    rnn_output_target = next_token_posterior
+    rnn_latent_target = None
+    return inputs, rnn_output_target, rnn_latent_target
+
+loss_fn = lambda output, _, target, __: kl_divergence(output, target)
+loss = train(rnn, get_batch, loss_fn=loss_fn, num_epochs=5, steps_per_epoch=200, optimizer=1e-2)
 
 # Embed emissions as one-hot vectors and run the RNN.
 inputs = jax.nn.one_hot(jnp.asarray(emissions, jnp.int32), hmm.emission_dim)
@@ -75,7 +86,7 @@ exact.initialize_weights(hmm)
 
 # Run the RNN; its output will equal the true next token posterior.
 x0 = np.log(hmm.latent_stationary_density)
-exact_output_timeseries, _ = exact.respond(inputs, x0=x0)
+exact_output_timeseries, _ = exact.respond(inputs, initial_condition=x0)
 ```
 
 ## HMM classes
@@ -168,47 +179,57 @@ hmm = HMMFactory.dyck_fun(depth=2, width=4)  # an edge-emitting, functionally de
 
 ## RNN Classes
 
-This repository exposes an easily extendable `AbstractRNN` class, capable of modelling a nonlinear, single-layer RNN. It also includes three pre-written RNN classes we use to explore HMM inference:
+This repository exposes an easily extendable `AbstractRNN` class, capable of modelling a nonlinear, single-layer RNN. It also includes two pre-written RNN classes we use to explore HMM inference:
 
 |  Model   |               Integrates               |               Readout               |                  Constraints                  |
 |:--------:|:--------------------------------------:|:-----------------------------------:|:---------------------------------------------:|
-| Exact RNN | $x_t = \log(A \exp(x_{t-1})) + B\ u_t$ |   $p_t = C\ \text{softmax}(x_t)$    |     `A`, `C` stochastic; `B` unconstrained     |
-| Model A  |     $x_t = A\ x_{t-1} + B\ u_t$     |   $p_t = C\ \text{softmax}(x_t)$    | `A` Schur stable; `C` stochastic; `B` unconstrained |
-| Model B  |    $x_t = A\  x_{t-1} + B\ u_t$     | $p_t = \text{softmax}(C \ x_t + d)$ |     `A` Schur stable; `B`, `C`, `d` unconstrained     |
+| `ExactRNN` | $x_t = \log(A \exp(x_{t-1})) + B\ u_t$ |   $p_t = C\ \text{softmax}(x_t)$    |     `A`, `C` stochastic; `B` unconstrained     |
+| `LinearRNN`  |     $x_t = A\ x_{t-1} + B\ u_t$     |   $p_t = C\ \text{softmax}(x_t)$    | `A` Schur stable; `C` stochastic; `B` unconstrained |
 
 Here $x_t$ denotes the hidden state vector, $u_t$ denotes the input vector at time $t$ (e.g. a one-hot embedding of an emission symbol), and $p_t$ is the output of the RNN (trained to approximate the next token posterior probability distribution $p_{t,i}=P(y_{t+1}=i| y_{0:t})$).
 
 ### Training
 
-There are two methods for training an RNN:
+The core training function is `train` from `rnn_filtering.train`:
 
-- **`rnn.train(inputs, desired_output=..., output_loss=..., ...)`** — HMM-agnostic. Accepts a pre-computed batch of input vectors `(B, T, K)` and optional target arrays. Runs gradient descent for a fixed number of steps and returns a `(optimization_steps,)` loss history. Use this when you have your own data pipeline.
+```python
+from rnn_filtering.train import train, kl_divergence
 
-- **`train_on_hmm(rnn, hmm, output_loss=..., num_epochs=..., ...)`** — HMM-aware wrapper. Handles sampling, one-hot embedding of emission symbols, and posterior computation. Loops over `num_epochs` data-resampling epochs and returns a `(optimization_steps, num_epochs)` loss history.
+def get_batch():
+    # return (inputs, output_targets, latent_targets)
+    # shapes: (B, T, input_dim), (B, T, output_dim) or None, (B, T, latent_dim) or None
+    ...
+
+def loss_fn(rnn_output, rnn_latents, rnn_output_targets, rnn_latent_targets):
+    # return scalar loss
+    # shapes: (B, T, input_dim), (B, T, latent_dim), (B, T, output_dim) or None, (B, T, latent_dim) or None
+    ...
+
+loss_history = train(
+    rnn,
+    get_batch,
+    loss_fn=lambda out, lat, tgt_out, tgt_lat: kl_divergence(out, tgt_out),
+    num_epochs=10,        # number of times get_batch is called
+    steps_per_epoch=200,  # gradient steps taken on each batch
+    optimizer=1e-2,       # Adam learning rate, or any optax GradientTransformation
+    initial_condition=x0, # initial latent state, defaults to zeros
+    callback=lambda epoch, loss, rnn: print(f"epoch {epoch}  loss={loss:.4f}"),
+)
+# loss_history shape: (num_epochs,)
+```
+
+`get_batch` is called once per epoch to produce fresh data. Each epoch then runs `steps_per_epoch` gradient steps on that batch via `jax.lax.scan` — all on-device. The RNN is updated in-place. Pass `None` for unused targets; `loss_fn` receives `jnp.zeros(0)` as a sentinel in that case.
 
 ### Loss functions
 
-Both `rnn.train` and `train_on_hmm` accept a `output_loss` and an optional `latent_loss` argument. Each can be a string key or any callable with signature `(result, desired) -> scalar`.
+`rnn_filtering.train` exports three built-in loss functions. All have the signature `fn(p, q, *, clip=1e-12, do_average=True) -> jax.Array` where `p` and `q` are `(B, T, D)` arrays:
 
-Built-in string keys:
+| Function | Description |
+|----------|-------------|
+| `kl_divergence(p, q)` | KL(p ‖ q); convention 0·log(0) = 0 |
+| `hilbert_distance(p, q)` | Hilbert projective metric |
+| `one_norm(p, q)` | L1 distance between distributions |
 
-| Key | Description                                    | Target shape |
-|-----|------------------------------------------------|--------------|
-| `"kl"` | KL divergence KL(desired ‖ result)             | `(B, T, K)` distribution |
-| `"hilbert"` | Hilbert projective metric                      | `(B, T, K)` distribution |
-| `"one_norm"` | L1 norm between distributions                  | `(B, T, K)` distribution |
-| `"emissions"` | One-hot KL = NLL (used in `train_on_hmm` only) | handled automatically |
-
-`"emissions"` is only available through `train_on_hmm`, which converts integer emission symbols to one-hot vectors and passes them as targets to the KL loss. Calling `rnn.train` directly with `output_loss="emissions"` will raise an error — pass one-hot embeddings explicitly as `desired_output` with `output_loss="kl"` instead.
-
-All built-in loss functions also support a `clip` keyword argument (default varies by function) and a `do_average` keyword argument (default `True`). To customise clipping, use `functools.partial`:
-
-```python
-from functools import partial
-from rnn_filtering.rnn import kl_divergence
-
-loss = train_on_hmm(rnn, hmm, output_loss=partial(kl_divergence, clip=1e-8))
-```
 
 ### Parameters and constraints
 
@@ -243,7 +264,7 @@ Individual parameters can also be frozen so that their `dof` are held fixed duri
 
 ```python
 rnn.freeze({"B", "C"})   # fix B and C
-train_on_hmm(rnn, hmm, ...)   # only A is updated
+train(rnn, get_batch, ...)   # only A is updated
 rnn.unfreeze({"B", "C"})
 ```
 
@@ -269,7 +290,7 @@ static methods: (below, we use `sin` and `cos` just to express that evolution ca
 
 ```python
 from rnn_filtering.rnn import AbstractRNN
-from rnn_filtering import train_on_hmm
+from rnn_filtering.train import train, kl_divergence
 import jax.numpy as jnp
 
 class MyNonlinearModel(AbstractRNN):
@@ -295,9 +316,9 @@ class MyNonlinearModel(AbstractRNN):
         y_t = C @ jnp.cos(x_t)
         return x_t, y_t
 
-# for some hmm...
-rnn = MyNonlinearModel(hmm.latent_dim, hmm.emission_dim, hmm.emission_dim, seed=0)
-loss = train_on_hmm(rnn, hmm, output_loss="kl", batch_size=100, time_steps=500, optimization_steps=1000)
+rnn = MyNonlinearModel(hmm.emission_dim, hmm.latent_dim, hmm.emission_dim, seed=0)
+
+loss = train(rnn, get_batch, loss_fn, num_epochs, steps_per_epoch, optimizer)
 ```
 
 Each key in the schema dict corresponds to an argument name in `integrate`. The `shape` field

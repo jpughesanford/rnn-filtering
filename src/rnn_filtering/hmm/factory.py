@@ -227,3 +227,18 @@ class HMMFactory:
             transfer_operator=transfer_matrix,
             emission_operator=emission_matrix,
         )
+
+    @staticmethod
+    def pip(
+        dimension: int = 3,
+        tau: float = 0.15,
+        eps: float = 0.20,
+    ) -> NodeEmittingHMM:
+        transfer_matrix = np.eye(dimension)*(1-dimension*tau) + np.ones((dimension,dimension))*tau
+        emission_matrix = np.eye(dimension)*(1-dimension*eps) + np.ones((dimension,dimension))*eps
+        return NodeEmittingHMM(
+            latent_dim=dimension,
+            emission_dim=dimension,
+            transfer_operator=transfer_matrix,
+            emission_operator=emission_matrix,
+        )

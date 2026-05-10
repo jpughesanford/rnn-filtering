@@ -2,7 +2,7 @@
 
 import pytest
 
-from rnn_filtering.rnn.types import ConstraintType, LossType
+from rnn_filtering.rnn.types import ConstraintType
 
 
 class TestConstruction:
@@ -13,11 +13,3 @@ class TestConstruction:
     def test_constraint_value_checking(self):
         with pytest.raises(ValueError):
             ConstraintType("unknown_type")
-
-    def test_instantiate_loss_from_string(self):
-        for member in LossType:
-            LossType(member.value)
-
-    def test_loss_value_checking(self):
-        with pytest.raises(ValueError):
-            LossType("unknown_type")

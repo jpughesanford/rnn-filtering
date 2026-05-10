@@ -7,7 +7,7 @@ import pytest
 from rnn_filtering.hmm import HMMFactory, NodeEmittingHMM
 from rnn_filtering.rnn import AbstractRNN, Parameter, register_parameter_type
 from rnn_filtering.rnn.parameters import StableParameter
-from rnn_filtering.training import train_on_hmm
+from rnn_filtering.train.utils import train
 
 
 @pytest.fixture
@@ -33,7 +33,13 @@ class TestConstraints:
                 return x_t, y_t
 
         rnn = StochasticModel(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
-        train_on_hmm(rnn, casino, batch_size=10, time_steps=50, optimization_steps=50, print_every=0)
+        def get_batch():
+            _, emissions = casino.sample(10, 50)
+            emissions = jnp.asarray(emissions, jnp.int32)
+            inputs = jax.nn.one_hot(emissions, rnn.input_dim)
+            _, posterior = casino.compute_posterior(emissions)
+            return inputs, jnp.asarray(posterior), None
+        train(rnn, get_batch, num_epochs=1, steps_per_epoch=50, optimizer=1e-2)
         A = np.array(rnn.get_parameter_values({"A"})["A"])
         assert np.allclose(A.sum(axis=0), 1.0, atol=1e-6)
         assert np.all(A >= 0)
@@ -55,7 +61,13 @@ class TestConstraints:
                 return x_t, y_t
 
         rnn = StableModel(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
-        train_on_hmm(rnn, casino, batch_size=10, time_steps=50, optimization_steps=50, print_every=0)
+        def get_batch():
+            _, emissions = casino.sample(10, 50)
+            emissions = jnp.asarray(emissions, jnp.int32)
+            inputs = jax.nn.one_hot(emissions, rnn.input_dim)
+            _, posterior = casino.compute_posterior(emissions)
+            return inputs, jnp.asarray(posterior), None
+        train(rnn, get_batch, num_epochs=1, steps_per_epoch=50, optimizer=1e-2)
         A = np.array(rnn.get_parameter_values({"A"})["A"])
         assert np.all(np.abs(np.linalg.eigvals(A)) <= 1 + 1e-5)
 
@@ -76,7 +88,13 @@ class TestConstraints:
                 return x_t, y_t
 
         rnn = NonnegativeModel(casino.emission_dim, casino.latent_dim, casino.emission_dim, seed=0)
-        train_on_hmm(rnn, casino, batch_size=10, time_steps=50, optimization_steps=50, print_every=0)
+        def get_batch():
+            _, emissions = casino.sample(10, 50)
+            emissions = jnp.asarray(emissions, jnp.int32)
+            inputs = jax.nn.one_hot(emissions, rnn.input_dim)
+            _, posterior = casino.compute_posterior(emissions)
+            return inputs, jnp.asarray(posterior), None
+        train(rnn, get_batch, num_epochs=1, steps_per_epoch=50, optimizer=1e-2)
         A = np.array(rnn.get_parameter_values({"A"})["A"])
         assert np.all(A >= 0)
 
